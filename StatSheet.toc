@@ -1,0 +1,21 @@
+## Interface: 16001, 120000, 120001, 120005, 120007, 120100
+## Title: StatSheet
+## Notes: The character sheet stats, worked out properly: real DPS after misses and glancing blows, what each stat is worth to you, caps, where swings go, and what an item would change before you equip it.
+## Version: 0.3.2
+## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin
+## SavedVariables: StatSheetDB
+## IconTexture: Interface\Icons\INV_Misc_Note_01
+## AddonCompartmentFunc: StatSheet_OnCompartmentClick
+## X-Curse-Project-ID: 1722707
+
+Options.lua
+Media.lua
+ConfigKit.lua
+Regen.lua
+Stats.lua
+Tabs.lua
+Tracker.lua
+Compare.lua
+Panel.lua
+Audit.lua
+Config.lua

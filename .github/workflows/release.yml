@@ -1,0 +1,28 @@
+# Builds the add-on and publishes it whenever a version tag (v1.2.3) is pushed: a GitHub
+# release always, and CurseForge once the repository has a CF_API_KEY secret and the .toc has
+# an "## X-Curse-Project-ID:" line. Uses the BigWigs packager, which reads .pkgmeta.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CF_API_KEY: ${{ secrets.CF_API_KEY }}
+      GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Built and tested for WoW Forever only, so uploads are tagged with Forever's game version on
+      # CurseForge (1.60.1, its interface 16001), not the retail 12.x versions also in the .toc.
+      - uses: BigWigsMods/packager@v2
+        with:
+          args: -g 1.60.1

@@ -1,0 +1,6 @@
+# Made by tools, never part of the add-on
+*.zip
+*.tmp
+Thumbs.db
+desktop.ini
+.DS_Store
