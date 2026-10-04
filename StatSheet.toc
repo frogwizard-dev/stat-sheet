@@ -2,14 +2,14 @@
 ## Title: StatSheet
 ## Category: Frog Wizard
 ## Notes: The character sheet stats, worked out properly: real DPS after misses and glancing blows, what each stat is worth to you, caps, where swings go, and what an item would change before you equip it.
-## Version: 0.3.3
+## Version: 0.3.4
 ## OptionalDeps: EllesmereUI, EllesmereUIBlizzardSkin
 ## SavedVariables: StatSheetDB
 ## IconTexture: Interface\Icons\INV_Misc_Note_01
 ## AddonCompartmentFunc: StatSheet_OnCompartmentClick
 ## X-Curse-Project-ID: 1722707
 
-Options.lua
+Libs\FrogLib\FrogLib.xml
 Media.lua
 ConfigKit.lua
 Regen.lua
