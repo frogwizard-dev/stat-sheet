@@ -1,5 +1,10 @@
 # StatSheet
 
+## 0.3.3
+
+### Options
+- Listed with the rest of Frog Wizard's add-ons: under a "Frog Wizard" heading in the AddOn list, and in its own "Frog Wizard" section of Options > AddOns, whose page lists them all with a button to each one's settings.
+
 ## 0.3.2
 
 ### Changes
