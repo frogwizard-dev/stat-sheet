@@ -9,10 +9,10 @@ local _, ns = ...
 -- a secret, and the panel runs every getter in pcall: a cell that can't be read keeps its last
 -- readable text (dimmed) instead of breaking.
 
-local issecret = issecretvalue or function() return false end
+local issecret = FrogLib.issecret
 
 local function N(v)
-    if v == nil or issecret(v) then error("unreadable", 0) end
+    if issecret(v) or v == nil then error("unreadable", 0) end
     return v
 end
 ns.N = N

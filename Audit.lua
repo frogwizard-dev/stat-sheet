@@ -13,7 +13,7 @@ local _, ns = ...
 local Audit = {}
 ns.Audit = Audit
 
-local issecret = issecretvalue or function() return false end
+local issecret = FrogLib.issecret
 
 local function Clean(v, depth, seen)
     if issecret(v) then return "<secret>" end
@@ -315,7 +315,7 @@ end
 
 local function FormKey()
     local id = GetShapeshiftFormID and GetShapeshiftFormID()
-    if not id or issecret(id) then return "normal" end
+    if issecret(id) or not id then return "normal" end
     return "form" .. id
 end
 

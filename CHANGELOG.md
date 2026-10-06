@@ -1,5 +1,11 @@
 # StatSheet
 
+## 0.3.5
+
+### Under the hood
+- Values the game hides from add-ons are checked for first everywhere (the stat audit's shapeshift form, unreadable stats), with FrogLib's checks shared with the other Frog Wizard add-ons.
+- The tab row's class colour is FrogLib's: a class colour add-on's colour is used if you have one.
+
 ## 0.3.4
 
 ### Under the hood

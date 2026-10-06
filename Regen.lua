@@ -11,7 +11,7 @@ local _, ns = ...
 local Regen = {}
 ns.Regen = Regen
 
-local issecret = issecretvalue or function() return false end
+local issecret = FrogLib.issecret
 local FSR = 5           -- the five-second rule
 local MIN_TICKS = 3
 local OUTLIER = 2.5     -- a run this many times over GetManaRegen's rate isn't plain regen

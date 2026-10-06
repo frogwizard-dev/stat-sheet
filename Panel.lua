@@ -461,7 +461,8 @@ function Panel:LayTabs(ctx)
     local f, look = self.frame, ctx.look
     local current = CurrentTab()
     local _, class = UnitClass("player")
-    local cc = (RAID_CLASS_COLORS and RAID_CLASS_COLORS[class]) or { r = 1, g = 0.82, b = 0 }
+    local cr, cg, cb = FrogLib.Color.Class(class)
+    local cc = cr and { r = cr, g = cg, b = cb } or { r = 1, g = 0.82, b = 0 }
     local h = ctx.size + 14
     local x, w = PAD - 4, 0
     for i, b in ipairs(self.tabs) do
