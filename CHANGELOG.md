@@ -1,5 +1,12 @@
 # StatSheet
 
+## 0.3.6
+
+- Settings: a dropdown shows the current choice afresh whenever its page opens, and shift-clicking + or - moves ten steps at once. The settings controls now come from FrogLib, shared with Frog Wizard's other add-ons.
+- The panel's hairlines (card edges, the tab rule) are one screen pixel thick at any UI scale; they could be two.
+- Text no longer has its font set again on every refresh when it hasn't changed.
+- With FrogUI's wider character window too, the window now grows by both: the stats panel no longer hangs past the window's edge, over the round tabs beside it.
+
 ## 0.3.5
 
 ### Under the hood

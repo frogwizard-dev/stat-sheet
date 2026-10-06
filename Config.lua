@@ -19,16 +19,7 @@ ns.defaults = {
         defense = true, armorLevels = true },
 }
 
-local function CopyDefaults(src, dst)
-    for k, v in pairs(src) do
-        if type(v) == "table" then
-            if type(dst[k]) ~= "table" then dst[k] = {} end
-            CopyDefaults(v, dst[k])
-        elseif dst[k] == nil then
-            dst[k] = v
-        end
-    end
-end
+local CopyDefaults = FrogLib.Util.CopyDefaults
 
 ------------------------------------------------------------------------------
 -- Settings window

@@ -92,12 +92,14 @@ function ns.Fonts(theme)
 end
 
 local function SetFont(fs, path, size)
-    if fs.mediaFont ~= path .. "|" .. size .. "|" then ns.Media:SetFont(fs, path, size, "") end
+    -- Only when it changes (FrogLib's Media notes the font it set on the text).
+    if fs.frogFont ~= path .. "|" .. size .. "|" then ns.Media:SetFont(fs, path, size, "") end
 end
 
+-- One screen pixel in the frame's units, for hairlines.
 local function OnePixel(frame)
-    local scale = frame:GetEffectiveScale()
-    return (scale and scale > 0) and (1 / scale) or 1
+    local ok, px = pcall(FrogLib.Pixel, frame)
+    return (ok and px and px > 0) and px or 1
 end
 
 local function SetColor(fs, c, a) fs:SetTextColor(c[1], c[2], c[3], a or 1) end
@@ -1239,8 +1241,10 @@ function Panel:Widen()
     if InCombatLockdown() and cf:IsProtected() then return end
     local collapsed = cf.IsRightPaneCollapsed and cf:IsRightPaneCollapsed()
     local extra = (not collapsed and ns.db.mode == "replace") and (ns.db.extraWidth or 0) or 0
-    local base = collapsed and (CHARACTER_FRAME_COLLAPSED_WIDTH or 398) or (CHARACTER_FRAME_WIDTH or 631)
-    cf:SetWidth(base + extra)
+    -- The window's width counts FrogUI's extra too (FrogLib's Sheet.lua): set on its own, the
+    -- last addon to set it would leave the other's pane hanging over the window's edge.
+    FrogLib.Sheet.SetExtra("StatSheet", "right", ns.db.mode == "replace" and (ns.db.extraWidth or 0) or 0)
+    cf:SetWidth(FrogLib.Sheet.Width())
     cf.RightPaneHost:SetWidth(PANE_WIDTH + extra)
     for _, region in ipairs({ cf.RightPaneHost:GetRegions() }) do
         local atlas = region.GetAtlas and region:GetAtlas()
