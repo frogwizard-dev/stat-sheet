@@ -16,7 +16,8 @@ ns.defaults = {
     compare = true,     -- add what an item would change to its tooltip
     collapsed = {},     -- blocks folded away by clicking their header
     sections = { general = true, attributes = true, caps = true, melee = true, ranged = true, spell = true,
-        defense = true, armorLevels = true },
+        defense = true, armorLevels = true, tanking = true, rage = true, supplies = true,
+        ready = true, pet = true, measured = true, professions = true },
 }
 
 local CopyDefaults = FrogLib.Util.CopyDefaults
@@ -61,12 +62,19 @@ end
 
 local SECTION_LABELS = {
     { "attributes", "Attributes (Overview)" },
+    { "ready", "Ready to go: missing buffs, bag space (Overview)" },
     { "caps", "Caps: weapon skill, defense, hit (Overview)" },
     { "melee", "Melee (Offense)" },
     { "ranged", "Ranged, with a ranged weapon or wand (Offense)" },
     { "spell", "Spells, for classes with mana (Offense)" },
+    { "pet", "Your pet (Offense)" },
+    { "rage", "Rage: what swings and hits taken give (Offense)" },
+    { "tanking", "Tanking a raid boss: threat, crushing blows, crits, block value (Defense)" },
+    { "measured", "Measured in your fights: what enemies' swings really did (Defense)" },
     { "armorLevels", "Armor by enemy level (Defense)" },
     { "defense", "Defense: armor, dodge, resistances (Defense)" },
+    { "supplies", "Ammo, weapon buffs & enchants (Gear)" },
+    { "professions", "Professions (Gear)" },
     { "general", "General: speed, rage or energy (Gear)" },
 }
 

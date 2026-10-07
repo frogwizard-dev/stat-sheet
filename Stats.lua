@@ -689,7 +689,9 @@ local function SwingTable(over)
     t.dodge = take(ENEMY_DODGE[over] + SkillShort(skill) * 0.04)
     t.glance = take(GlancingChance(over, skill))
     t.glancePenalty = GlancingPenalty(over, skill)
-    t.crit = take(N(GetCritChance()) - SkillGap(over, skill) * 0.04)
+    -- Crit lost to weapon skill short of the enemy's defense.
+    t.critPenalty = math.max(0, SkillGap(over, skill) * 0.04)
+    t.crit = take(N(GetCritChance()) - t.critPenalty)
     t.hit = left
     t.mult = (t.hit + t.crit * 2 + t.glance * (1 - t.glancePenalty / 100)) / 100
     return t
@@ -830,15 +832,15 @@ ns.S = {
 -- Every section, for the audit.
 ns.Sections = { attributes, caps, melee, ranged, spell, defense, general }
 
--- Events that can change something the panel shows. Unit events are for the player only.
+-- Events that can change something the panel shows. Unit events are for you and your pet.
 ns.UnitEvents = {
     "UNIT_STATS", "UNIT_ATTACK_SPEED", "UNIT_DAMAGE", "UNIT_RANGEDDAMAGE", "UNIT_ATTACK_POWER",
     "UNIT_RANGED_ATTACK_POWER", "UNIT_RESISTANCES", "UNIT_AURA", "UNIT_MAXHEALTH", "UNIT_MAXPOWER",
-    "UNIT_DISPLAYPOWER", "UNIT_INVENTORY_CHANGED", "UNIT_DEFENSE", "UNIT_LEVEL",
+    "UNIT_DISPLAYPOWER", "UNIT_INVENTORY_CHANGED", "UNIT_DEFENSE", "UNIT_LEVEL", "UNIT_HAPPINESS",
 }
 ns.Events = {
     "PLAYER_EQUIPMENT_CHANGED", "COMBAT_RATING_UPDATE", "SPELL_POWER_CHANGED",
     "PLAYER_DAMAGE_DONE_MODS", "UPDATE_INVENTORY_DURABILITY", "UPDATE_SHAPESHIFT_FORM",
     "SKILL_LINES_CHANGED", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED", "PLAYER_TALENT_UPDATE",
-    "CHARACTER_POINTS_CHANGED",
+    "CHARACTER_POINTS_CHANGED", "UNIT_PET", "PET_UI_UPDATE", "GROUP_ROSTER_UPDATE", "BAG_UPDATE_DELAYED",
 }

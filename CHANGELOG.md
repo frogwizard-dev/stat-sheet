@@ -1,5 +1,24 @@
 # StatSheet
 
+## 0.3.7
+
+- New **List** tab: every stat the game's own character sheet can show, one per line in groups, with the game's own tooltips (the same list FrogUI can put in the stats pane).
+- New on the Defense tab, **Tanking a raid boss** (shield users, warriors, paladins and druids in bear form):
+  - **Crushing blows**: how often a boss three levels up lands one, and how much more miss, dodge, parry or block pushes them off the table, including whether Shield Block or Holy Shield covers it while it's up.
+  - **Crits from a boss**: its crit chance on you, and the defense that stops it altogether.
+  - **Block value**: how much damage each block takes off.
+- New on the Offense tab, **Rage** (warriors, druids in bear form): about how much rage each white hit gives and how much a minute your swings make, and the rage from damage taken.
+- New in Caps, **Crit cap (boss)**: the most crit your auto-attacks can use against a boss from behind, after its misses, dodges and glancing blows.
+- New on the Gear tab, **Ammo & weapon buffs**: your arrows or bullets and how many minutes of shooting they last, and the time left on poisons, imbues, oils and stones.
+- **Threat** (with the tanking lines, or with the general stats for anyone else it applies to): your multiplier from stance or form, Defiance or Feral Instinct, Righteous Fury and Blessing of Salvation, part by part.
+- **Measured in your fights** on the Defense tab: what enemies' swings really did to you this session, from the game's own combat feedback: how many you avoided, blocked, took as crits or crushing blows, and your average hit taken.
+- **Resisted (boss)** in Defense: your average partial resist for each school, against a boss and against your own level.
+- **Hit Chance** when dual wielding: the target is for your white hits, and it now says the lower one your special attacks need.
+- **Pet** on the Offense tab (hunters, warlocks): its health, damage, attack power, armor, experience and resistances; a hunter's pet's happiness and the damage it's worth, and its loyalty and training points.
+- **Ready to go** on the Overview: buffs the classes in your group (you included) can give that you haven't got, and your own class's that you know but haven't put up, plus your free bag space.
+- **Enchants** on the Gear tab: gear that could carry an enchant but doesn't. **Professions**: each with its cap, and a note when it's near enough to see a trainer.
+- Each new section can be hidden in the settings.
+
 ## 0.3.6
 
 - Settings: a dropdown shows the current choice afresh whenever its page opens, and shift-clicking + or - moves ten steps at once. The settings controls now come from FrogLib, shared with Frog Wizard's other add-ons.

@@ -1186,7 +1186,7 @@ end
 -- An event this client doesn't have raises an error when registered, so each is tried alone.
 function Panel:OnShow()
     local f = self.frame
-    for _, e in ipairs(ns.UnitEvents) do pcall(f.RegisterUnitEvent, f, e, "player") end
+    for _, e in ipairs(ns.UnitEvents) do pcall(f.RegisterUnitEvent, f, e, "player", "pet") end
     for _, e in ipairs(ns.Events) do pcall(f.RegisterEvent, f, e) end
     if self.mode == "replace" then self:HideList() end
     self:Layout()
