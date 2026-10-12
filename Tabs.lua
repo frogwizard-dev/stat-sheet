@@ -751,22 +751,21 @@ local pet = {
             return Num(UnitHealthMax("pet")) .. " HP", false, string.format("level %d", N(UnitLevel("pet")))
         end },
         { label = "Happiness", wide = true, get = function()
-            if not (HasPet() and GetPetHappiness) then return false end
-            local happiness, damage = GetPetHappiness()
+            if not HasPet() then return false end
+            -- FrogLib.Unit: Forever's C_PetInfo.
+            local happiness, damage = FrogLib.Unit.PetHappiness()
             if not happiness then return false end
             return HAPPINESS[happiness] or tostring(happiness), false,
                 damage and string.format("deals %d%% damage", damage) or nil
         end, tip = function(tt)
             Line(tt, "A happy pet deals 125% damage, a content one 100% and an unhappy one 75%; unhappy for too "
                 .. "long, it runs away. Feeding it food it likes keeps it happy.")
-            if GetPetLoyalty then
-                local ok, loyalty = pcall(GetPetLoyalty)
-                if ok and loyalty then Line(tt, " ") Line(tt, "Loyalty", loyalty) end
-            end
-            if GetPetTrainingPoints then
-                local ok, total, spent = pcall(GetPetTrainingPoints)
-                if ok and total then Line(tt, "Training points", string.format("%d free of %d", total - (spent or 0), total)) end
-            end
+            local loyalty = FrogLib.Unit.PetLoyalty()
+            if loyalty then Line(tt, " ") Line(tt, "Loyalty", loyalty) end
+            local total, used = FrogLib.Unit.PetTraining()
+            if total then Line(tt, "Training points", string.format("%d free of %d", total - used, total)) end
+            local foods = FrogLib.Unit.PetFood()
+            if foods then Line(tt, "Eats", table.concat(foods, ", ")) end
         end },
         { label = "Damage", get = function()
             if not HasPet() then return false end
@@ -974,34 +973,48 @@ for _, id in ipairs(PROFESSIONS) do professions.cells[#professions.cells + 1] = 
 
 local LIST_COLORS = { "General", "Attributes", "Attack", "Attack", "Secondary Stats", "Defense", "Defense" }
 
+local PET_LIST_COLORS = { "General", "Attributes", "Insights", "Defense" }
+
+-- One section per category: each stat a whole row, read for `unit` ("player" or "pet").
+local function ListSection(key, title, colorKey, entries, unit)
+    local sec = { key = key, title = title, colorKey = colorKey, cells = {} }
+    if unit ~= "player" then sec.show = function() return UnitExists(unit) and true or false end end
+    for _, entry in ipairs(entries) do
+        local last = {}
+        sec.cells[#sec.cells + 1] = {
+            wide = true,
+            -- Read after get, which fills it in.
+            label = function() return last.label end,
+            get = function()
+                if unit ~= "player" and not UnitExists(unit) then return false end
+                local label, value, tips = FrogLib.StatList.Read(entry, unit)
+                if label == nil then return false end
+                label, value = N(label), N(value) -- hidden by the game: the last reading stays
+                last.label = (label:gsub(":%s*$", ""))
+                last.tips = tips
+                return value
+            end,
+            -- The game's own tooltip lines (its first is the name and value, shown already).
+            tip = function(tt)
+                for n, t in ipairs(last.tips or {}) do
+                    if n > 1 and not FrogLib.issecret(t) then Line(tt, t) end
+                end
+            end,
+        }
+    end
+    return { kind = "section", section = sec }
+end
+
+-- Yours, then your pet's (while it's out), each category its own section.
 local function ListBlocks()
     local StatList = FrogLib.StatList
     local blocks = {}
     for i, cat in ipairs(StatList.CATEGORIES) do
-        local sec = { key = "list" .. i, title = cat[1], colorKey = LIST_COLORS[i] or "General", cells = {} }
-        for _, entry in ipairs(cat[2]) do
-            local last = {}
-            sec.cells[#sec.cells + 1] = {
-                wide = true,
-                -- Read after get, which fills it in.
-                label = function() return last.label end,
-                get = function()
-                    local label, value, tips = StatList.Read(entry)
-                    if label == nil then return false end
-                    label, value = N(label), N(value) -- hidden by the game: the last reading stays
-                    last.label = (label:gsub(":%s*$", ""))
-                    last.tips = tips
-                    return value
-                end,
-                -- The game's own tooltip lines (its first is the name and value, shown already).
-                tip = function(tt)
-                    for n, t in ipairs(last.tips or {}) do
-                        if n > 1 and not FrogLib.issecret(t) then Line(tt, t) end
-                    end
-                end,
-            }
-        end
-        blocks[#blocks + 1] = { kind = "section", section = sec }
+        blocks[#blocks + 1] = ListSection("list" .. i, cat[1], LIST_COLORS[i] or "General", cat[2], "player")
+    end
+    for i, cat in ipairs(StatList.PET_CATEGORIES or {}) do
+        blocks[#blocks + 1] = ListSection("petlist" .. i, (PET or "Pet") .. ": " .. cat[1],
+            PET_LIST_COLORS[i] or "General", cat[2], "pet")
     end
     return blocks
 end

@@ -1,5 +1,9 @@
 # StatSheet
 
+## 0.3.8
+
+- The **List** tab shows your pet's stats under your own while it's out: the game's own pet stats, its damage per second and attack speed, a hunter's pet's happiness (and the damage it's worth), loyalty, training points, experience and the food it eats, and its resistances.
+
 ## 0.3.7
 
 - New **List** tab: every stat the game's own character sheet can show, one per line in groups, with the game's own tooltips (the same list FrogUI can put in the stats pane).
