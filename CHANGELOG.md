@@ -1,5 +1,9 @@
 # StatSheet
 
+## 0.3.9
+
+- Options > AddOns with the gamepad interface: the Frog Wizard pages no longer upset the game's gamepad navigation (which could bring up errors on opening the settings). From FrogLib 1.5.0.
+
 ## 0.3.8
 
 - The **List** tab shows your pet's stats under your own while it's out: the game's own pet stats, its damage per second and attack speed, a hunter's pet's happiness (and the damage it's worth), loyalty, training points, experience and the food it eats, and its resistances.
