@@ -20,6 +20,7 @@ end
 local f = CreateFrame("Frame")
 pcall(f.RegisterUnitEvent, f, "UNIT_COMBAT", "player")
 f:SetScript("OnEvent", function(_, _, unit, action, flags, amount, school)
+    if not UnitAffectingCombat("player") then return end -- not falls, lava and the like
     if issecret(action) or issecret(school) or issecret(flags) then return end
     if school ~= nil and school ~= 1 then return end -- physical only
     local avoided = AVOIDED[action]

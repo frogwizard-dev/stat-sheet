@@ -1,7 +1,22 @@
 # StatSheet
 
-## 0.3.9
+## 0.4.0
 
+- **Auto** on the Melee / Caster switch, now the default: mages, priests and warlocks see caster numbers, warriors, rogues and hunters melee, a druid follows its form (cat and bear are melee), and a shaman or paladin goes by whether their spell power or attack power is the bigger part. Picking Melee or Caster still sticks, and a choice you'd already made is kept.
+- **Pinned**: shift-click any stat row, on any tab, to pin it to the top of the Overview. Shift-click it again to unpin. Pins are kept between sessions.
+- **Narrow layout**: with little extra width, or a slim panel beside the window, the big numbers go two to a row and stats that sat side by side get a line each.
+- The small line under each big number wraps onto a second line instead of being cut off, and some are shorter.
+- A tab's sections no longer repeat what its big numbers above already show (spell power, spell crit and mana regen as a caster, the main hand as melee).
+- The small grey lines under stats are brighter and easier to read, in both looks.
+- Section headers fold with an arrow before the name, and the whole header row can be clicked.
+- A soft fade at the bottom of the panel shows there's more to scroll to, and at the top once you've scrolled down.
+- Gains and losses in "Since you logged in" and on item tooltips use the same softer green and red.
+- The sheet is lighter on your game in combat: it holds still while you fight and catches up the moment combat ends.
+- The Gear tab's weapon buff and ammo timers, and the "4m ago" times, now count down while you watch.
+- Before you equip: a two-handed weapon is compared with what's in both your hands, an off-hand weapon counts for half its damage, and a ring or trinket is compared with the weaker of the two you wear.
+- "Measured in your fights" on the Defense tab no longer counts falling or lava damage.
+- "Replace the game's stats" now takes over properly even if the game's stats list wasn't ready when you logged in.
+- Glancing blows now come from the game itself, so they match Forever's live rules rather than the beta's.
 - Options > AddOns with the gamepad interface: the Frog Wizard pages no longer upset the game's gamepad navigation (which could bring up errors on opening the settings). From FrogLib 1.5.0.
 
 ## 0.3.8

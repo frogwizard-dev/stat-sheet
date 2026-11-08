@@ -314,12 +314,29 @@ local function SkillGap(over, skill)
     return (UnitLevel("player") + over) * SKILL_PER_LEVEL - skill
 end
 
+-- The released game works glancing blows out itself (GetGlancingBlowChance/Penalty, taking your
+-- weapon skill and the enemy's defense, as fractions); the formulas below are the beta's, for
+-- clients without them.
+local function EnemyDefense(over)
+    return (UnitLevel("player") + over) * SKILL_PER_LEVEL
+end
+
 local function GlancingChance(over, skill)
+    if GetGlancingBlowChance then
+        local ok, v = pcall(GetGlancingBlowChance, skill, EnemyDefense(over))
+        v = ok and N(v)
+        if v then return math.max(0, math.min(100, v * 100)) end
+    end
     skill = math.min(UnitLevel("player") * SKILL_PER_LEVEL, skill)
     return math.max(-100, math.min(100, (0.02 * SkillGap(over, skill) + 0.1) * 100))
 end
 
 local function GlancingPenalty(over, skill)
+    if GetGlancingBlowPenalty then
+        local ok, v = pcall(GetGlancingBlowPenalty, skill, EnemyDefense(over))
+        v = ok and N(v)
+        if v then return math.max(0, math.min(100, v * 100)) end
+    end
     local gap = SkillGap(over, skill)
     local low = 1.30 - 0.05 * gap
     local high = 1.20 - 0.03 * gap
@@ -823,6 +840,11 @@ ns.R = {
     IncomingTable = IncomingTable, SpellMiss = SpellMiss, HitNeeded = HitNeeded,
     AP_PER_DPS = AP_PER_DPS, SKILL_PER_LEVEL = SKILL_PER_LEVEL,
 }
+
+-- Better and worse, for changes (the change cards, item tooltips): a muted green and red that sit
+-- well on EllesmereUI's dark and Forever's bronze alike.
+ns.GOOD, ns.BAD = { 0.45, 0.80, 0.47 }, { 0.87, 0.42, 0.38 }
+ns.GOOD_HEX, ns.BAD_HEX = "|cff73cc78", "|cffde6b61"
 
 ns.S = {
     attributes = attributes, caps = caps, melee = melee, ranged = ranged, spell = spell,

@@ -34,14 +34,40 @@ local function Stats(link)
     return out
 end
 
--- The slot it would go in: an empty one if there is one, else the first.
-local function TargetSlot(equipLoc)
+local MAIN, OFF = INVSLOT_MAINHAND or 16, INVSLOT_OFFHAND or 17
+
+local function Equipped(slot) return GetInventoryItemLink("player", slot) end
+
+local function ItemLevel(link)
+    local lvl = C_Item.GetDetailedItemLevelInfo and C_Item.GetDetailedItemLevelInfo(link)
+    return tonumber(lvl) or 0
+end
+
+local function MainIsTwoHand()
+    local link = Equipped(MAIN)
+    return link and select(4, C_Item.GetItemInfoInstant(link)) == "INVTYPE_2HWEAPON"
+end
+
+-- The slot it would go in and the slots it would empty: an empty one if there is one; for
+-- rings and trinkets the weaker (lower item level) of the two; a two-hander replaces both hands.
+local function TargetSlots(equipLoc)
     local slots = SLOTS[equipLoc]
     if not slots then return nil end
+    if equipLoc == "INVTYPE_2HWEAPON" then return MAIN, { MAIN, OFF } end
+    -- With a two-hander in hand, anything for either hand goes in the main hand and replaces it.
+    if slots[1] == MAIN and #slots > 1 and MainIsTwoHand() then return MAIN, { MAIN } end
+    if (slots[1] == OFF) and MainIsTwoHand() then return OFF, { MAIN } end
     for _, slot in ipairs(slots) do
-        if not GetInventoryItemLink("player", slot) then return slot end
+        if not Equipped(slot) then return slot, { slot } end
     end
-    return slots[1]
+    local best, bestLevel = slots[1], nil
+    if #slots > 1 then
+        for _, slot in ipairs(slots) do
+            local lvl = ItemLevel(Equipped(slot))
+            if not bestLevel or lvl < bestLevel then best, bestLevel = slot, lvl end
+        end
+    end
+    return best, { best }
 end
 
 local function StatAfter(i, delta)
@@ -50,10 +76,19 @@ local function StatAfter(i, delta)
 end
 
 -- The changes, as { label, text, good } lines.
-local function Changes(newLink, oldLink, slot)
-    local new, old = Stats(newLink), Stats(oldLink)
+-- `old` is one link or { [slot] = link } for everything it replaces (a two-hander: both hands).
+local function Changes(newLink, old, slot)
+    if type(old) ~= "table" then old = { [slot] = old } end
+    local new = Stats(newLink)
     local d = {}
-    for k in pairs(new) do d[k] = new[k] - old[k] end
+    for k in pairs(new) do d[k] = new[k] end
+    local oldDPS = { main = 0, off = 0 }
+    for oslot, link in pairs(old) do
+        local st = Stats(link)
+        for k in pairs(d) do d[k] = d[k] - st[k] end
+        d.dps = d.dps + st.dps -- weapon DPS is settled per hand below
+        if oslot == MAIN then oldDPS.main = st.dps elseif oslot == OFF then oldDPS.off = st.dps end
+    end
     local lines = {}
     local function add(label, value, fmt, suffix)
         if math.abs(value) < 0.05 then return end
@@ -69,7 +104,9 @@ local function Changes(newLink, oldLink, slot)
         + ((R.StatAP(2, agiNew) or 0) - (R.StatAP(2, agiNow) or 0))
     local critNow = R.Call(GetCritChanceFromStat, 2, agiNow) or 0
     local critNew = R.Call(GetCritChanceFromStat, 2, agiNew) or 0
-    local dWeapon = (slot == (INVSLOT_MAINHAND or 16)) and d.dps or 0
+    -- Weapon DPS per hand; the off hand hits for half (as the game's own numbers do).
+    local dWeapon = -oldDPS.main - oldDPS.off * 0.5
+    if slot == MAIN then dWeapon = dWeapon + new.dps elseif slot == OFF then dWeapon = dWeapon + new.dps * 0.5 end
     local dPaper = dWeapon + dAP / R.AP_PER_DPS
     local dReal = dPaper * sw.mult + (paper + dPaper) * (critNew - critNow)
     add("Real DPS", dReal, "%+.1f")
@@ -108,19 +145,26 @@ local function OnTooltip(tooltip)
         local _, link = tooltip:GetItem()
         if not link or C_Item.IsEquippedItem(link) then return end
         local equipLoc = select(4, C_Item.GetItemInfoInstant(link))
-        local slot = TargetSlot(equipLoc)
+        local slot, replaced = TargetSlots(equipLoc)
         if not slot then return end
-        local oldLink = GetInventoryItemLink("player", slot)
-        local lines = Changes(link, oldLink, slot)
-        local oldName = oldLink and (C_Item.GetItemInfo(oldLink) or oldLink:match("%[(.-)%]"))
+        local old, names = {}, {}
+        for _, s in ipairs(replaced) do
+            local l = Equipped(s)
+            if l then
+                old[s] = l
+                names[#names + 1] = C_Item.GetItemInfo(l) or l:match("%[(.-)%]")
+            end
+        end
+        local lines = Changes(link, old, slot)
+        local oldName = #names > 0 and table.concat(names, " + ") or nil
         tooltip:AddLine(" ")
         tooltip:AddLine(oldName and ("StatSheet: instead of " .. oldName) or "StatSheet: in an empty slot", 1, 0.78, 0.25)
         if #lines == 0 then
             tooltip:AddLine("No change to your stats", 0.6, 0.6, 0.6)
         end
         for _, l in ipairs(lines) do
-            local r, g, b = 0.31, 0.89, 0.42
-            if not l[3] then r, g, b = 0.9, 0.33, 0.29 end
+            local c = l[3] and ns.GOOD or ns.BAD
+            local r, g, b = c[1], c[2], c[3]
             tooltip:AddDoubleLine(l[1], l[2], 0.75, 0.75, 0.75, r, g, b)
         end
     end)

@@ -17,7 +17,6 @@ local R, S = ns.R, ns.S
 local N, Num, Pct, Dec, Line = R.N, R.Num, R.Pct, R.Dec, R.Line
 
 local CASTERS = { MAGE = true, PRIEST = true, WARLOCK = true }
-local function IsCaster() return CASTERS[R.Class()] end
 
 local function EHP()
     local hp, r = N(UnitHealthMax("player")), R.ArmorReduction(R.ArmorNow())
@@ -47,7 +46,7 @@ local damageTile = {
     get = function()
         if Caster() then
             return "+" .. Num((R.BestSchool(GetSpellBonusDamage))), false,
-                Pct((R.BestSchool(GetSpellCritChance))) .. " spell crit"
+                Pct((R.BestSchool(GetSpellCritChance))) .. " crit"
         end
         local paper = R.PaperDPS()
         return string.format("%.1f", paper * R.SwingTable(0).mult), false, string.format("%.1f on paper", paper)
@@ -66,7 +65,7 @@ local ehpTile = {
     caption = "EFFECTIVE HP", colorKey = "Defense",
     get = function()
         local ehp, hp, r = EHP()
-        return Num(math.floor(ehp + 0.5)), false, string.format("%s HP · %.1f%% armor", Num(hp), r * 100)
+        return Num(math.floor(ehp + 0.5)), false, string.format("%s HP, armor %.0f%%", Num(hp), r * 100)
     end,
     tip = function(tt)
         Line(tt, "The physical damage it takes to bring you down from full health, once armor has "
@@ -185,15 +184,36 @@ local function CasterWorth()
     return rows
 end
 
--- Which list to show: the one picked on the card, else what suits the class and form (a druid in
--- caster form is a caster).
+-- Auto: mages, priests and warlocks are casters; warriors, rogues and hunters melee; a druid is
+-- melee in cat or bear form and a caster otherwise; a shaman or paladin is a caster once their
+-- best spell school's bonus passes half their attack power. The last answer stays if it can't be
+-- read (in combat).
+local CAT_BEAR = { [1] = true, [5] = true, [8] = true }
+local lastAuto
+
+local function AutoRole()
+    local class = R.Class()
+    if CASTERS[class] then return "caster" end
+    if class == "DRUID" then
+        local id = GetShapeshiftFormID and GetShapeshiftFormID()
+        if id == nil and GetShapeshiftFormID then return "caster" end
+        if id ~= nil then return CAT_BEAR[N(id)] and "melee" or "caster" end
+        return (GetShapeshiftForm() or 0) == 0 and "caster" or "melee"
+    end
+    if class == "SHAMAN" or class == "PALADIN" then
+        local sp = R.BestSchool(GetSpellBonusDamage)
+        return sp > R.MeleeAP() / 2 and "caster" or "melee"
+    end
+    return "melee"
+end
+
+-- Which list to show: Melee or Caster when picked on the switch, else Auto.
 function ns.WorthRole()
     local role = ns.db.role
     if role == "melee" or role == "caster" then return role end
-    if IsCaster() then return "caster" end
-    local class = R.Class()
-    if (class == "DRUID" and (GetShapeshiftForm() or 0) == 0) or class == "PRIEST" then return "caster" end
-    return "melee"
+    local ok, auto = pcall(AutoRole)
+    if ok and auto then lastAuto = auto end
+    return lastAuto or "melee"
 end
 
 function ns.Worth()
@@ -1090,19 +1110,26 @@ local casterTiles = {
     end },
     { caption = "MANA REGEN", colorKey = "Secondary Stats", get = function()
         local rate, measured = ManaRate()
-        return Dec(rate * 5), false, measured and "per 5s, measured" or "per 5s resting"
+        return Dec(rate * 5), false, measured and "mp5, measured" or "mp5 resting"
     end },
 }
 
+-- The Main Hand row's tooltip, for the Swing tile that stands in for it.
+local function CellTip(section, label)
+    for _, cell in ipairs(section.cells) do
+        if cell.label == label then return cell.tip end
+    end
+end
+
 local meleeTiles = {
     { caption = "PAPER DPS", colorKey = "Attack", get = function()
-        return string.format("%.1f", R.PaperDPS()), false, "what the game shows"
+        return string.format("%.1f", R.PaperDPS()), false, "on the sheet"
     end },
     { caption = "SWING", colorKey = "Attack", get = function()
         local min, max = UnitDamage("player")
         return string.format("%.2fs", N((UnitAttackSpeed("player")))), false,
             string.format("%d-%d damage", math.floor(N(min)), math.ceil(N(max)))
-    end },
+    end, tip = CellTip(S.melee, "Main Hand") },
     damageTile,
 }
 
@@ -1139,7 +1166,8 @@ local function OffenseBlocks()
         return {
             roleSwitch,
             { kind = "tiles", tiles = casterTiles },
-            { kind = "section", section = S.spell },
+            -- The tiles show spell power, spell crit and mana regen.
+            { kind = "section", section = S.spell, skip = { Damage = true, Crit = true, ["Mana Regen"] = true } },
             spellsGo,
             castsFromFull,
             { kind = "section", section = pet },
@@ -1148,7 +1176,8 @@ local function OffenseBlocks()
     end
     local blocks = {
         { kind = "tiles", tiles = meleeTiles },
-        { kind = "section", section = S.melee },
+        -- The Swing and Paper DPS tiles show the main hand's line.
+        { kind = "section", section = S.melee, skip = { ["Main Hand"] = true } },
         { kind = "section", section = rage },
         { kind = "section", section = S.ranged },
         { kind = "section", section = pet },
@@ -1168,6 +1197,7 @@ ns.Tabs = {
     {
         key = "overview", title = "Overview",
         blocks = {
+            { kind = "pinned" },
             { kind = "tiles", tiles = { damageTile, ehpTile, powerTile } },
             { kind = "section", section = S.attributes },
             { kind = "worth" },
@@ -1194,7 +1224,7 @@ ns.Tabs = {
                     local hp = N(UnitHealthMax("player"))
                     if best == 0 then return Num(hp), false, "no resistances yet" end
                     local avg = math.min(0.75, 0.75 * best / (level * 5))
-                    return Num(math.floor(hp / (1 - avg) + 0.5)), false, string.format("best school, %d%% resisted", avg * 100 + 0.5)
+                    return Num(math.floor(hp / (1 - avg) + 0.5)), false, string.format("best school %d%%", avg * 100 + 0.5)
                 end },
                 { caption = "AVOID", colorKey = "Defense", get = function()
                     local t = R.IncomingTable(0)
@@ -1248,3 +1278,24 @@ ns.Tabs = {
         blocks = ListBlocks(),
     },
 }
+
+-- Every section a row can be pinned from, for finding pinned rows (Panel.lua) before their tab
+-- has been opened.
+function ns.PinSections()
+    local out, seen = {}, {}
+    local function add(sec)
+        if sec and not seen[sec] then
+            seen[sec] = true
+            out[#out + 1] = sec
+        end
+    end
+    for _, tab in ipairs(ns.Tabs) do
+        if type(tab.blocks) == "table" then
+            for _, block in ipairs(tab.blocks) do
+                if block.kind == "section" then add(block.section) end
+            end
+        end
+    end
+    for _, sec in ipairs({ S.spell, S.melee, rage, S.ranged, pet }) do add(sec) end
+    return out
+end

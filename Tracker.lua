@@ -172,6 +172,21 @@ f:RegisterEvent("SKILL_LINES_CHANGED")
 f:RegisterUnitEvent("UNIT_STATS", "player")
 f:RegisterUnitEvent("UNIT_AURA", "player")
 f:RegisterUnitEvent("UNIT_RESISTANCES", "player")
+f:RegisterEvent("PLAYER_REGEN_ENABLED")
+
+-- Buffs and the like: refresh the snapshot quietly once things settle. Not in combat, where
+-- some numbers are hidden; one is taken when combat ends instead.
+local quietPending = false
+local function Quiet()
+    if quietPending or InCombatLockdown() then return end
+    quietPending = true
+    C_Timer.After(1.5, function()
+        quietPending = false
+        if InCombatLockdown() then return end
+        if not pending.slots and not pending.level then base = Snapshot() end
+    end)
+end
+
 f:SetScript("OnEvent", function(_, event, arg1)
     if event == "PLAYER_LOGIN" then
         After("settle", 2, function() base = Snapshot() end)
@@ -185,9 +200,6 @@ f:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "SKILL_LINES_CHANGED" then
         After("settle", 0.5, Settle)
     elseif not pending.slots and not pending.level then
-        -- Buffs and the like: refresh the snapshot quietly once things settle.
-        After("quiet", 1.5, function()
-            if not pending.slots and not pending.level then base = Snapshot() end
-        end)
+        Quiet()
     end
 end)

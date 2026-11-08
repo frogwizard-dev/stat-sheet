@@ -16,6 +16,7 @@ local PAD = 10          -- left and right margin inside the panel
 local GAP = 12          -- between the two columns of a section
 local TILE_GAP = 6
 local BLOCK_GAP = 8
+local NARROW = 280      -- inner widths below this get the narrow layout
 
 -- EllesmereUI's character sheet colours, and the overrides from its options page when it's
 -- installed, so the panel matches the rest of the sheet.
@@ -39,20 +40,22 @@ end
 
 local LOOKS = {
     ellesmere = {
-        text = { 0.90, 0.91, 0.92 }, label = { 0.65, 0.69, 0.72 }, note = { 0.50, 0.54, 0.57 },
+        text = { 0.90, 0.91, 0.92 }, label = { 0.65, 0.69, 0.72 }, note = { 0.60, 0.64, 0.67 },
         caption = { 0.55, 0.58, 0.62 }, colourValues = true, headerLines = true,
         cardBg = { 0.086, 0.106, 0.125, 1 }, cardEdge = { 0.137, 0.165, 0.192, 1 },
         track = { 0.137, 0.165, 0.192, 1 }, tabIdle = { 0.55, 0.58, 0.62 },
         sizes = { body = 1, note = 0, caption = -1, number = 9, header = 2, tab = 1 },
+        fade = { 0.035, 0.043, 0.051, 0.85 },
     },
     blizzard = {
-        text = { 1, 1, 1 }, label = { 1, 0.82, 0 }, note = { 0.66, 0.60, 0.50 },
+        text = { 1, 1, 1 }, label = { 1, 0.82, 0 }, note = { 0.80, 0.75, 0.64 },
         caption = { 1, 0.82, 0 }, value = { 1, 1, 1 },
         headerAtlas = "UI-Character-Info-Title", rowAtlas = "UI-Character-Info-Line-Bounce",
         border = "common-insideframe", bar = { 0.79, 0.60, 0.18 },
         cardBg = { 0, 0, 0, 0.45 }, cardEdge = { 0.42, 0.32, 0.19, 1 },
         track = { 0, 0, 0, 0.5 }, tabIdle = { 0.79, 0.66, 0.42 },
         sizes = { body = 0, note = 0, caption = -1, number = 7, header = 1, tab = 0 },
+        fade = { 0, 0, 0, 0.6 },
     },
 }
 
@@ -163,20 +166,77 @@ end
 -- Widgets (pooled; each layout reuses them in order)
 ------------------------------------------------------------------------------
 
+------------------------------------------------------------------------------
+-- Pins: shift-clicking a stat row puts it in "Pinned" at the top of the Overview. Saved as
+-- "<section key>:<label>" in db.pins, in the order they were pinned.
+------------------------------------------------------------------------------
+
+-- Where each pinned key's row is: filled in as rows are laid out, and by one look through every
+-- section (ns.PinSections, Tabs.lua) for keys not seen yet.
+local pinIndex, pinSourceOf = {}, {}
+local pinScanned = false
+
+local function Pins()
+    if type(ns.db.pins) ~= "table" then ns.db.pins = {} end
+    return ns.db.pins
+end
+
+local function IsPinned(key)
+    if not key then return false end
+    for _, k in ipairs(Pins()) do
+        if k == key then return true end
+    end
+    return false
+end
+
+local function TogglePin(key)
+    if not key then return end
+    local pins = Pins()
+    for i, k in ipairs(pins) do
+        if k == key then
+            table.remove(pins, i)
+            return
+        end
+    end
+    pins[#pins + 1] = key
+    pinScanned = false
+end
+
+-- A row's key: its section's and its name (the name it showed, for names that are worked out).
+local function PinKey(sec, cell, st)
+    if cell.pinKey then return cell.pinKey end
+    local label = cell.label
+    if type(label) ~= "string" then label = st and st.label end
+    if type(label) ~= "string" or label == "" or FrogLib.issecret(label) then return nil end
+    return sec.key .. ":" .. label
+end
+
 local function ShowTip(b)
     local item = b.item
-    if not (item and item.tip) then return end
-    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+    if not item then return end
     local st = state[item]
+    if not (item.tip or b.pinKey) then return end
+    GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
     GameTooltip:AddDoubleLine(st and st.label or "", st and st.text or "", 1, 1, 1, 1, 1, 1)
-    pcall(item.tip, GameTooltip)
+    if item.tip then pcall(item.tip, GameTooltip) end
     if st and st.stale then
         GameTooltip:AddLine("Last value read; it can't be read in combat.", 0.6, 0.6, 0.6, true)
+    end
+    if b.pinKey then
+        GameTooltip:AddLine(IsPinned(b.pinKey) and "Shift-click to unpin" or "Shift-click to pin to the Overview",
+            0.5, 0.5, 0.5)
     end
     GameTooltip:Show()
 end
 
 local function HideTip() GameTooltip:Hide() end
+
+local function CellClick(b)
+    if not (b.pinKey and IsShiftKeyDown()) then return end
+    TogglePin(b.pinKey)
+    Panel:Layout()
+    if GameTooltip:IsOwned(b) then ShowTip(b) end
+end
 
 local function Text(parent, layer)
     local fs = parent:CreateFontString(nil, layer or "OVERLAY")
@@ -202,6 +262,26 @@ end
 
 local MAKERS = {}
 
+-- The switch's choices: Auto goes by class and form (Tabs.lua, ns.WorthRole).
+local ROLES = { "auto", "melee", "caster" }
+local ROLE_NAMES = { auto = "Auto", melee = "Melee", caster = "Caster" }
+
+-- One switch button: the choice lit, and under Auto what it picked lit faintly.
+local function PaintRole(b, look, gold)
+    local choice = ns.db.role
+    if choice ~= "melee" and choice ~= "caster" then choice = "auto" end
+    if b.role == choice then
+        b.bg:SetColorTexture(gold[1], gold[2], gold[3], 1)
+        b.text:SetTextColor(0.06, 0.07, 0.08)
+    elseif choice == "auto" and b.role == ns.WorthRole() then
+        b.bg:SetColorTexture(gold[1], gold[2], gold[3], 0.28)
+        SetColor(b.text, look.text)
+    else
+        b.bg:SetColorTexture(0, 0, 0, 0.35)
+        SetColor(b.text, look.tabIdle)
+    end
+end
+
 function MAKERS.cell(self)
     local b = CreateFrame("Button", nil, self.content)
     b.shade = b:CreateTexture(nil, "BACKGROUND")
@@ -223,10 +303,14 @@ function MAKERS.cell(self)
     hl:SetColorTexture(1, 1, 1, 0.05)
     b:SetScript("OnEnter", ShowTip)
     b:SetScript("OnLeave", HideTip)
+    b:SetScript("OnClick", CellClick)
     return b
 end
 
--- Block headers fold their block away when clicked (remembered per block).
+-- Block headers fold their block away when clicked anywhere on the row (remembered per block).
+-- An arrow before the name shows which way it is: right folded, down open.
+local FOLD_ARROW = "Interface\\ChatFrame\\ChatFrameExpandArrow"
+
 function MAKERS.header(self)
     local h = CreateFrame("Button", nil, self.content)
     h.bg = h:CreateTexture(nil, "BACKGROUND")
@@ -234,11 +318,11 @@ function MAKERS.header(self)
     h.title = Text(h)
     h.left = h:CreateTexture(nil, "ARTWORK")
     h.right = h:CreateTexture(nil, "ARTWORK")
-    h.fold = Text(h)
-    h.fold:SetPoint("RIGHT", -2, 0)
+    h.arrow = h:CreateTexture(nil, "OVERLAY")
+    h.arrow:SetTexture(FOLD_ARROW)
     local hl = h:CreateTexture(nil, "HIGHLIGHT")
     hl:SetAllPoints()
-    hl:SetColorTexture(1, 1, 1, 0.04)
+    hl:SetColorTexture(1, 1, 1, 0.07)
     h:SetScript("OnClick", function(btn)
         local collapsed = ns.db.collapsed
         collapsed[btn.key] = not collapsed[btn.key] or nil
@@ -259,6 +343,9 @@ function MAKERS.tile(self)
     t.value:SetJustifyH("LEFT")
     t.sub = Text(t)
     t.sub:SetJustifyH("LEFT")
+    t.sub:SetJustifyV("TOP")
+    t.sub:SetWordWrap(true)
+    if t.sub.SetMaxLines then t.sub:SetMaxLines(2) end
     t:SetScript("OnEnter", ShowTip)
     t:SetScript("OnLeave", HideTip)
     return t
@@ -285,7 +372,7 @@ function MAKERS.card(self)
     c.title = Text(c)
     c.title:SetPoint("TOPLEFT", 10, -10)
     c.toggles = {}
-    for i, role in ipairs({ "melee", "caster" }) do
+    for i, role in ipairs(ROLES) do
         local b = CreateFrame("Button", nil, c)
         b.bg = b:CreateTexture(nil, "BACKGROUND")
         b.bg:SetAllPoints()
@@ -332,7 +419,7 @@ function MAKERS.roleBar(self)
     r.label = Text(r)
     r.label:SetPoint("LEFT", 0, 0)
     r.buttons = {}
-    for i, role in ipairs({ "melee", "caster" }) do
+    for i, role in ipairs(ROLES) do
         local b = CreateFrame("Button", nil, r)
         b.bg = b:CreateTexture(nil, "BACKGROUND")
         b.bg:SetAllPoints()
@@ -419,6 +506,22 @@ function Panel:Create()
     thumb:SetWidth(2)
     self.thumb = thumb
 
+    -- Fades at the top and bottom of the scroll area while there's more that way. On a frame of
+    -- their own above the content (a parent's textures draw under its children); no mouse.
+    local over = CreateFrame("Frame", nil, f)
+    over:SetAllPoints(scroll)
+    self.over = over
+    self.fadeTop = over:CreateTexture(nil, "OVERLAY")
+    self.fadeTop:SetPoint("TOPLEFT")
+    self.fadeTop:SetPoint("TOPRIGHT")
+    self.fadeTop:SetHeight(16)
+    self.fadeBottom = over:CreateTexture(nil, "OVERLAY")
+    self.fadeBottom:SetPoint("BOTTOMLEFT")
+    self.fadeBottom:SetPoint("BOTTOMRIGHT")
+    self.fadeBottom:SetHeight(22)
+    self.fadeTop:Hide()
+    self.fadeBottom:Hide()
+
     f:EnableMouseWheel(true)
     f:SetScript("OnMouseWheel", function(_, delta)
         local range = scroll:GetVerticalScrollRange()
@@ -431,7 +534,19 @@ function Panel:Create()
     for kind in pairs(MAKERS) do self.pools[kind] = {} end
     f:SetScript("OnShow", function() Panel:OnShow() end)
     f:SetScript("OnHide", function() Panel:OnHide() end)
-    f:SetScript("OnEvent", function() Panel:Queue() end)
+    f:SetScript("OnEvent", function(_, event) Panel:OnEvent(event) end)
+end
+
+-- The fades in the look's background colour: solid at the edge, clear toward the middle.
+-- 12.x's SetGradient takes colour objects; VERTICAL runs from the bottom (first) to the top.
+function Panel:PaintFades(look)
+    if self.fadeLook == look then return end
+    self.fadeLook = look
+    local c = look.fade
+    local solid, clear = CreateColor(c[1], c[2], c[3], c[4]), CreateColor(c[1], c[2], c[3], 0)
+    for _, tex in ipairs({ self.fadeTop, self.fadeBottom }) do tex:SetColorTexture(1, 1, 1, 1) end
+    self.fadeTop:SetGradient("VERTICAL", clear, solid)
+    self.fadeBottom:SetGradient("VERTICAL", solid, clear)
 end
 
 function Panel:PlaceThumb()
@@ -440,11 +555,16 @@ function Panel:PlaceThumb()
     if range <= 0.5 then
         thumb:Hide()
         scroll:SetVerticalScroll(0)
+        self.fadeTop:Hide()
+        self.fadeBottom:Hide()
         return
     end
+    local v = scroll:GetVerticalScroll()
+    self.fadeTop:SetShown(v > 1)
+    self.fadeBottom:SetShown(v < range - 1)
     local h = scroll:GetHeight()
     local size = math.max(20, h * h / (h + range))
-    local offset = (h - size) * (scroll:GetVerticalScroll() / range)
+    local offset = (h - size) * (v / range)
     thumb:ClearAllPoints()
     thumb:SetPoint("TOPRIGHT", scroll, "TOPRIGHT", -2, -offset)
     thumb:SetHeight(size)
@@ -515,28 +635,34 @@ function Panel:Header(ctx, y, key, title, colorKey)
     hd:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD, y)
     hd:SetSize(ctx.inner, h)
     SetFont(hd.title, ctx.fonts.bold, ctx.size + look.sizes.header)
-    SetFont(hd.fold, ctx.fonts.bold, ctx.size + look.sizes.header)
     hd.title:SetText(title)
-    hd.fold:SetText(collapsed and "+" or "-")
+    hd.folded = collapsed and true or false
+    -- The arrow: pointing right while folded, down while open.
+    local arrow, as = hd.arrow, math.floor(ctx.size + look.sizes.header + 2)
+    arrow:SetSize(as, as)
+    arrow:SetRotation(collapsed and 0 or -math.pi / 2)
+    arrow:ClearAllPoints()
     hd.title:ClearAllPoints()
     if look.headerAtlas then
-        hd.title:SetPoint("CENTER", 0, 1)
+        hd.title:SetPoint("CENTER", as / 2, 1)
+        arrow:SetPoint("RIGHT", hd.title, "LEFT", -3, 0)
+        arrow:SetVertexColor(1, 0.82, 0)
         hd.bg:SetAtlas(look.headerAtlas)
         hd.bg:Show()
         hd.left:Hide()
         hd.right:Hide()
         hd.title:SetTextColor(1, 1, 1)
-        hd.fold:SetTextColor(1, 0.82, 0)
     else
         -- EllesmereUI: the title on the left, a thin line in its colour running to the right.
-        hd.title:SetPoint("LEFT", 0, 0)
+        arrow:SetPoint("LEFT", -3, 0)
+        arrow:SetVertexColor(r, g, b, 0.9)
+        hd.title:SetPoint("LEFT", arrow, "RIGHT", 1, 0)
         hd.bg:Hide()
         hd.left:Hide()
         hd.title:SetTextColor(r, g, b)
-        hd.fold:SetTextColor(r, g, b, 0.8)
         hd.right:ClearAllPoints()
         hd.right:SetPoint("LEFT", hd.title, "RIGHT", 8, 0)
-        hd.right:SetPoint("RIGHT", hd, "RIGHT", -16, 0)
+        hd.right:SetPoint("RIGHT", hd, "RIGHT", 0, 0)
         hd.right:SetColorTexture(r, g, b, 0.25)
         hd.right:SetHeight(ctx.px)
         hd.right:Show()
@@ -563,42 +689,63 @@ function LAY.tiles(self, block, y, ctx)
         if st.text then items[#items + 1] = tile end
     end
     if #items == 0 then return y end
-    local w = (ctx.inner - TILE_GAP * (#items - 1)) / #items
+    -- Narrow: two to a row (a row with one left over gives it the whole width).
+    local perRow = (ctx.narrow and #items > 2) and 2 or #items
     local capSize = ctx.size + look.sizes.caption
     local numSize = ctx.size + look.sizes.number
     local subSize = ctx.size + look.sizes.note - 1
-    local h = 8 + capSize + 4 + numSize + 4 + subSize + 8
-    for i, tile in ipairs(items) do
-        local st = state[tile]
-        local t = self:Get("tile")
-        t.item = tile
-        t:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD + (i - 1) * (w + TILE_GAP), y)
-        t:SetSize(w, h)
-        t.bg:SetColorTexture(unpack(look.cardBg))
-        Edges(t, look.cardEdge, ctx.px)
-        SetFont(t.caption, ctx.fonts.bold, capSize)
-        SetFont(t.value, ctx.fonts.number, numSize)
-        SetFont(t.sub, ctx.fonts.note, subSize)
-        t.caption:SetText(st.label or "")
-        SetColor(t.caption, look.caption)
-        t.value:ClearAllPoints()
-        t.value:SetPoint("TOPLEFT", t.caption, "BOTTOMLEFT", 0, -4)
-        t.value:SetPoint("RIGHT", t, "RIGHT", -4, 0)
-        t.value:SetText(st.text)
-        if look.colourValues then
-            local r, g, b = SectionColor(tile.colorKey)
-            t.value:SetTextColor(r, g, b, st.stale and 0.45 or 1)
-        else
-            SetColor(t.value, look.value, st.stale and 0.45 or 1)
-        end
-        t.sub:ClearAllPoints()
-        t.sub:SetPoint("TOPLEFT", t.value, "BOTTOMLEFT", 0, -4)
-        t.sub:SetPoint("RIGHT", t, "RIGHT", -4, 0)
-        t.sub:SetText(st.note or "")
-        SetColor(t.sub, look.note)
-        t:EnableMouse(tile.tip ~= nil)
+    local rowsOf = {}
+    for i = 1, #items, perRow do
+        local row = {}
+        for j = i, math.min(#items, i + perRow - 1) do row[#row + 1] = items[j] end
+        rowsOf[#rowsOf + 1] = row
     end
-    return y - h - BLOCK_GAP
+    for _, row in ipairs(rowsOf) do
+        local w = (ctx.inner - TILE_GAP * (#row - 1)) / #row
+        -- The line under the number wraps onto a second line when it needs to; the whole row
+        -- grows to the tallest.
+        local tiles, subH = {}, subSize
+        for i, tile in ipairs(row) do
+            local st = state[tile]
+            local t = self:Get("tile")
+            tiles[i] = t
+            t.item = tile
+            SetFont(t.sub, ctx.fonts.note, subSize)
+            t.sub:SetWidth(math.max(10, w - 12))
+            t.sub:SetText(st.note or "")
+            subH = math.max(subH, math.min(t.sub:GetStringHeight(), subSize * 2 + 4))
+        end
+        local h = 8 + capSize + 4 + numSize + 4 + subH + 8
+        for i, tile in ipairs(row) do
+            local st = state[tile]
+            local t = tiles[i]
+            t:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD + (i - 1) * (w + TILE_GAP), y)
+            t:SetSize(w, h)
+            t.bg:SetColorTexture(unpack(look.cardBg))
+            Edges(t, look.cardEdge, ctx.px)
+            SetFont(t.caption, ctx.fonts.bold, capSize)
+            SetFont(t.value, ctx.fonts.number, numSize)
+            t.caption:SetText(st.label or "")
+            SetColor(t.caption, look.caption)
+            t.value:ClearAllPoints()
+            t.value:SetPoint("TOPLEFT", t.caption, "BOTTOMLEFT", 0, -4)
+            t.value:SetPoint("RIGHT", t, "RIGHT", -4, 0)
+            t.value:SetText(st.text)
+            if look.colourValues then
+                local r, g, b = SectionColor(tile.colorKey)
+                t.value:SetTextColor(r, g, b, st.stale and 0.45 or 1)
+            else
+                SetColor(t.value, look.value, st.stale and 0.45 or 1)
+            end
+            t.sub:ClearAllPoints()
+            t.sub:SetPoint("TOPLEFT", t.value, "BOTTOMLEFT", 0, -4)
+            t.sub:SetHeight(subH)
+            SetColor(t.sub, look.note)
+            t:EnableMouse(tile.tip ~= nil)
+        end
+        y = y - h - TILE_GAP
+    end
+    return y + TILE_GAP - BLOCK_GAP
 end
 
 -- Fills one cell and returns its height: the name and value line, then a bar and a note when it
@@ -666,10 +813,14 @@ end
 function LAY.section(self, block, y, ctx)
     local sec = block.section
     if not SectionShown(sec) then return y end
+    -- block.skip: rows the tab's tiles already show, by name.
+    local skip = block.skip
     local visible = {}
     for _, cell in ipairs(sec.cells) do
-        local st = Read(cell)
-        if st.text and not (ns.db.hideZero and st.zero) then visible[#visible + 1] = cell end
+        if not (skip and type(cell.label) == "string" and skip[cell.label]) then
+            local st = Read(cell)
+            if st.text and not (ns.db.hideZero and st.zero) then visible[#visible + 1] = cell end
+        end
     end
     if #visible == 0 then return y end
     local r, g, b = SectionColor(sec.colorKey)
@@ -685,6 +836,8 @@ function LAY.section(self, block, y, ctx)
         c.item = cell
         local wide = cell.wide
         if type(wide) == "function" then wide = wide() end
+        -- Narrow: rows of two stack into one column.
+        if ctx.narrow then wide = true end
         local x, w
         if wide then
             if col == 1 then
@@ -709,7 +862,12 @@ function LAY.section(self, block, y, ctx)
         else
             c.shade:Hide()
         end
-        c:EnableMouse(cell.tip ~= nil)
+        -- Pinned rows keep the key of where they came from.
+        c.pinKey = cell.pinKey or PinKey(block.pinSource and block.pinSource[cell] or sec, cell, st)
+        c:EnableMouse(true)
+        if c.pinKey and not block.pinSource then
+            pinIndex[c.pinKey], pinSourceOf[cell] = cell, sec
+        end
         if wide then
             y = y - h
         elseif col == 1 then
@@ -720,6 +878,38 @@ function LAY.section(self, block, y, ctx)
     end
     if col == 1 then y = y - rowH end
     return y - BLOCK_GAP
+end
+
+-- Pinned: the rows shift-clicked anywhere, in the order they were pinned. A pin whose row is
+-- gone (or has nothing to show right now) is left out quietly.
+local pinnedSec = { key = "pinned", title = "Pinned", colorKey = "Insights", cells = {} }
+
+local function IndexSection(sec)
+    for _, cell in ipairs(sec.cells or {}) do
+        local st = (type(cell.label) ~= "string" and not cell.pinKey) and (state[cell] or Read(cell)) or nil
+        local key = PinKey(sec, cell, st)
+        if key and not pinIndex[key] then pinIndex[key], pinSourceOf[cell] = cell, sec end
+    end
+end
+
+function LAY.pinned(self, block, y, ctx)
+    local pins = Pins()
+    if #pins == 0 then return y end
+    local missing = false
+    for _, k in ipairs(pins) do
+        if not pinIndex[k] then missing = true end
+    end
+    if missing and not pinScanned and ns.PinSections then
+        pinScanned = true
+        for _, sec in ipairs(ns.PinSections()) do pcall(IndexSection, sec) end
+    end
+    local cells = {}
+    for _, k in ipairs(pins) do
+        if pinIndex[k] then cells[#cells + 1] = pinIndex[k] end
+    end
+    if #cells == 0 then return y end
+    pinnedSec.cells = cells
+    return LAY.section(self, { section = pinnedSec, pinSource = pinSourceOf }, y, ctx)
 end
 
 -- Stacked bars: each row's segments side by side, with a legend of coloured keys under it.
@@ -851,26 +1041,25 @@ function LAY.worth(self, block, y, ctx)
     card.title:SetText("What +10 of each gets you")
     card.title:SetTextColor(gold[1], gold[2], gold[3])
 
-    -- The switch.
-    local role = ns.WorthRole()
-    local x = -8
+    -- The switch: beside the title, or under it when there isn't room.
+    local mana = ns.R.UsesMana()
+    local total = 0
+    for _, b in ipairs(card.toggles) do
+        SetFont(b.text, ctx.fonts.bold, ctx.size + look.sizes.note - 1)
+        b.text:SetText(ROLE_NAMES[b.role])
+        total = total + b.text:GetStringWidth() + 14
+    end
+    local below = mana and card.title:GetStringWidth() + total + 28 > ctx.inner
+    local x, ty = -8, below and -(10 + titleSize + 6) or -8
     for i = #card.toggles, 1, -1 do
         local b = card.toggles[i]
-        if ns.R.UsesMana() then
-            SetFont(b.text, ctx.fonts.bold, ctx.size + look.sizes.note - 1)
-            b.text:SetText(b.role == "melee" and "Melee" or "Caster")
+        if mana then
             local w = b.text:GetStringWidth() + 12
             b:SetSize(w, titleSize + 4)
             b:ClearAllPoints()
-            b:SetPoint("TOPRIGHT", card, "TOPRIGHT", x, -8)
+            b:SetPoint("TOPRIGHT", card, "TOPRIGHT", x, ty)
             x = x - w - 2
-            if b.role == role then
-                b.bg:SetColorTexture(gold[1], gold[2], gold[3], 1)
-                b.text:SetTextColor(0.06, 0.07, 0.08)
-            else
-                b.bg:SetColorTexture(0, 0, 0, 0.35)
-                SetColor(b.text, look.tabIdle)
-            end
+            PaintRole(b, look, gold)
             b:Show()
         else
             b:Hide()
@@ -878,7 +1067,7 @@ function LAY.worth(self, block, y, ctx)
     end
 
     local inner = ctx.inner - 20
-    local cy = 10 + titleSize + 10
+    local cy = 10 + titleSize + 10 + (below and titleSize + 8 or 0)
     local textSize = ctx.size + look.sizes.body
     local noteSize = ctx.size + look.sizes.note - 1
     for i, row in ipairs(rows) do
@@ -1022,7 +1211,7 @@ function Panel:Entry(ctx, y, data)
     return y - h - 5
 end
 
-local GOOD, BAD = "|cff4ee36b", "|cffe5534b"
+local GOOD, BAD = ns.GOOD_HEX, ns.BAD_HEX
 
 -- One change from the tracker, as a card: what it was, what it replaced, the stats that moved
 -- ("+1 Agi  -1 Sta  +6 Armor") and what they add up to ("Real DPS +0.1   Effective health -3%").
@@ -1100,24 +1289,17 @@ function LAY.role(self, block, y, ctx)
     bar.label:SetText("Show as")
     SetColor(bar.label, look.label)
     local gold = { SectionColor("Insights") }
-    local role = ns.WorthRole()
     local x = 0
     for i = #bar.buttons, 1, -1 do
         local b = bar.buttons[i]
         SetFont(b.text, ctx.fonts.bold, size - 1)
-        b.text:SetText(b.role == "melee" and "Melee" or "Caster")
+        b.text:SetText(ROLE_NAMES[b.role])
         local w = b.text:GetStringWidth() + 18
         b:SetSize(w, h)
         b:ClearAllPoints()
         b:SetPoint("TOPRIGHT", bar, "TOPRIGHT", x, 0)
         x = x - w - 2
-        if b.role == role then
-            b.bg:SetColorTexture(gold[1], gold[2], gold[3], 1)
-            b.text:SetTextColor(0.06, 0.07, 0.08)
-        else
-            b.bg:SetColorTexture(0, 0, 0, 0.35)
-            SetColor(b.text, look.tabIdle)
-        end
+        PaintRole(b, look, gold)
     end
     return y - h - BLOCK_GAP
 end
@@ -1146,6 +1328,13 @@ function Panel:Layout()
     content:SetWidth(width)
     ctx.inner = width - 2 * PAD
     ctx.half = (ctx.inner - GAP) / 2
+    -- Narrow (low extra width, or a slim "beside" panel): tiles two to a row, and rows of two
+    -- stats stacked. 280 is about where three tiles' numbers and two stats side by side start
+    -- to crowd (the default 110 extra width gives 323).
+    ctx.narrow = ctx.inner < NARROW
+
+    self.over:SetFrameLevel(content:GetFrameLevel() + 30)
+    pcall(self.PaintFades, self, look)
 
     if look.border and self.mode == "replace" then
         self.frame.border:SetAtlas(look.border)
@@ -1168,6 +1357,25 @@ function Panel:Layout()
     content:SetHeight(math.max(1, -y))
     self.scroll:UpdateScrollChildRect()
     self:PlaceThumb()
+    self:UpdateTicker()
+end
+
+-- The Gear tab's countdowns (weapon buffs, ammo) and "4m ago" times: redrawn each second while
+-- that tab is on screen, and only then.
+function Panel:UpdateTicker()
+    local want = self.frame:IsVisible() and CurrentTab().key == "gear"
+    if want and not self.ticker then
+        self.ticker = C_Timer.NewTicker(1, function()
+            if Panel.frame:IsVisible() and CurrentTab().key == "gear" then
+                Panel:Queue()
+            else
+                Panel:UpdateTicker()
+            end
+        end)
+    elseif not want and self.ticker then
+        self.ticker:Cancel()
+        self.ticker = nil
+    end
 end
 
 ------------------------------------------------------------------------------
@@ -1177,23 +1385,40 @@ end
 function Panel:Queue()
     if self.queued then return end
     self.queued = true
-    C_Timer.After(0.05, function()
+    C_Timer.After(0.25, function()
         self.queued = false
-        if self.frame:IsVisible() then self:Layout() end
+        if self.frame:IsVisible() then self:Layout() else self.dirty = true end
     end)
 end
 
+-- In combat the sheet holds still (unit events like UNIT_AURA fire constantly there) and
+-- catches up once when combat ends.
+function Panel:OnEvent(event)
+    if event == "PLAYER_REGEN_ENABLED" then
+        self.dirty = false
+        self:Queue()
+    elseif InCombatLockdown() then
+        self.dirty = true
+    else
+        self:Queue()
+    end
+end
+
 -- An event this client doesn't have raises an error when registered, so each is tried alone.
+-- Events only come in while the panel is shown; showing it lays it out fresh.
 function Panel:OnShow()
     local f = self.frame
     for _, e in ipairs(ns.UnitEvents) do pcall(f.RegisterUnitEvent, f, e, "player", "pet") end
     for _, e in ipairs(ns.Events) do pcall(f.RegisterEvent, f, e) end
+    pcall(f.RegisterEvent, f, "PLAYER_REGEN_ENABLED")
     if self.mode == "replace" then self:HideList() end
+    self.dirty = false
     self:Layout()
 end
 
 function Panel:OnHide()
     self.frame:UnregisterAllEvents()
+    self:UpdateTicker()
     HideTip()
 end
 
@@ -1288,4 +1513,16 @@ function Panel:Apply()
     end
     f:Show()
     if f:IsVisible() then self:Layout() end
+    self:HookRetry()
+end
+
+-- The stats list may not exist yet at login, so "replace" falls back to "beside". Try again
+-- each time the character window opens until the chosen mode sticks.
+function Panel:HookRetry()
+    local cf = _G.CharacterFrame
+    if self.retryHooked or not cf then return end
+    self.retryHooked = true
+    cf:HookScript("OnShow", function()
+        if Panel.mode ~= ns.db.mode and not InCombatLockdown() then Panel:Apply() end
+    end)
 end

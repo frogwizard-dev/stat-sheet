@@ -15,6 +15,7 @@ ns.defaults = {
     role = "auto",      -- "+10 of each" as melee or caster; "auto" goes by class and form
     compare = true,     -- add what an item would change to its tooltip
     collapsed = {},     -- blocks folded away by clicking their header
+    pins = {},          -- rows shift-clicked into "Pinned" on the Overview, as "<section>:<label>"
     sections = { general = true, attributes = true, caps = true, melee = true, ranged = true, spell = true,
         defense = true, armorLevels = true, tanking = true, rage = true, supplies = true,
         ready = true, pet = true, measured = true, professions = true },
@@ -55,9 +56,9 @@ local function BuildLayout(p)
         function() return db.attrEffects end, function(v) db.attrEffects = v end), 28)
     place(UI.Checkbox(p, "On item tooltips, show what wearing it would change",
         function() return db.compare end, function(v) db.compare = v end), 34)
-    place(UI.Help(p, "Hover a stat for the details behind it, and click a header to fold its block "
-        .. "away. In combat the game can hide some values; those keep their last reading, "
-        .. "dimmed, until combat ends.", 400), 40, 4)
+    place(UI.Help(p, "Hover a stat for the details behind it, shift-click it to pin it to the top of "
+        .. "the Overview, and click a header to fold its block away. In combat the game can hide some values; those keep their last reading, "
+        .. "dimmed, until combat ends.", 400), 52, 4)
 end
 
 local SECTION_LABELS = {
