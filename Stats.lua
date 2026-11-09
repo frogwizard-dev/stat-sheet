@@ -10,6 +10,7 @@ local _, ns = ...
 -- readable text (dimmed) instead of breaking.
 
 local issecret = FrogLib.issecret
+local T = FrogLib.Tank -- the combat maths, shared with other add-ons
 
 local function N(v)
     if issecret(v) or v == nil then error("unreadable", 0) end
@@ -168,19 +169,8 @@ local AGI_RAP = { HUNTER = 2, ROGUE = 1, WARRIOR = 1 }
 
 local function Class() return select(2, UnitClass("player")) end
 
--- Attack power from a stat, as the client works it out (GetAttackPowerForStat(1, 28) = 56).
-local function StatAP(i, stat)
-    if not GetAttackPowerForStat then return nil end
-    local ok, v = pcall(GetAttackPowerForStat, i, stat)
-    if ok and type(v) == "number" and not issecret(v) then return v end
-end
-
--- A number from one of Forever's stat functions, or nil if it's missing, fails or is secret.
-local function Call(fn, ...)
-    if type(fn) ~= "function" then return nil end
-    local ok, v = pcall(fn, ...)
-    if ok and type(v) == "number" and not issecret(v) then return v end
-end
+-- Attack power from a stat (the client's sum) and stat functions' numbers: FrogLib.Tank.
+local StatAP, Call = T.StatAP, T.Call
 
 -- The same as Forever's own attribute tooltips (Camelot/PaperDollFrameStats.lua,
 -- PaperDollFrame_SetStatTooltip2), with the client's functions it uses.
@@ -265,47 +255,11 @@ local attributes = {
 ------------------------------------------------------------------------------
 
 -- Each 14 attack power adds 1 damage per second to a weapon (Classic's rule).
-local AP_PER_DPS = 14
+local AP_PER_DPS = T.AP_PER_DPS
 
--- Weapon skills, the way Forever's sheet finds them (Camelot/PaperDollFrameStats.lua): the
--- weapon's subclass names a skill line, a druid in a form uses Feral Combat, and an empty main
--- hand is Unarmed.
-local S = Enum.ItemWeaponSubclass
-local WEAPON_SKILL_ID = {
-    [S.Sword1H] = 43, [S.Axe1H] = 44, [S.Bows] = 45, [S.Guns] = 46, [S.Mace1H] = 54,
-    [S.Sword2H] = 55, [S.Staff] = 136, [S.Mace2H] = 160, [S.Axe2H] = 172, [S.Dagger] = 173,
-    [S.Thrown] = 176, [S.Crossbow] = 226, [S.Wand] = 228, [S.Polearm] = 229, [S.Unarmed] = 162,
-}
-local FERAL_SKILL, UNARMED_SKILL = 3014, 162
-local SKILL_PER_LEVEL = 5
-
-local function WeaponSkillID(slot)
-    if Class() == "DRUID" and (GetShapeshiftForm() or 0) ~= 0 then return FERAL_SKILL end
-    local id = GetInventoryItemID("player", slot)
-    if not id then
-        return slot == (INVSLOT_MAINHAND or 16) and UNARMED_SKILL or nil
-    end
-    local _, _, _, _, _, classID, subclassID = C_Item.GetItemInfoInstant(id)
-    if classID ~= Enum.ItemClass.Weapon then return nil end
-    return WEAPON_SKILL_ID[subclassID]
-end
-
--- Your skill with the weapon in a slot (rank plus bonuses), its cap and its name.
-local function WeaponSkill(slot)
-    local skillID = WeaponSkillID(slot)
-    local get = skillID and C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID
-    if not get then return nil end
-    local ok, info = pcall(get, skillID)
-    if not ok or type(info) ~= "table" or type(info.rank) ~= "number" or issecret(info.rank) then return nil end
-    return info.rank + (info.modifier or 0), info.maxRank, info.name
-end
-
--- Defense skill (base plus bonuses) and its cap, your level x 5.
-local function DefenseSkill()
-    if not UnitDefenseSkill then return nil end
-    local base, mod = UnitDefenseSkill("player")
-    return math.max(0, N(base) + N(mod)), UnitLevel("player") * SKILL_PER_LEVEL
-end
+-- Weapon and defense skill, the way Forever's sheet finds them: FrogLib.Tank.
+local SKILL_PER_LEVEL = T.SKILL_PER_LEVEL
+local WeaponSkill, DefenseSkill = T.WeaponSkill, T.DefenseSkill
 
 -- Forever's weapon skill rules (Camelot/SkillsFrame.lua): each point of weapon skill short of
 -- the enemy's defense (its level x 5) costs 0.04% chance to hit and to crit, and against raid
@@ -348,26 +302,9 @@ local function GlancingPenalty(over, skill)
     return 100 - math.max(0, math.min(1, (low + high) / 2)) * 100
 end
 
--- An enemy `over` levels up attacking you (Camelot/PaperDollFrameStats.lua): its weapon skill
--- is its level x 5, and each point of that over your defense moves 0.04% from its misses to its
--- crits; 15 or more points over, it can land crushing blows.
-local function EnemyGap(over, defense)
-    return (UnitLevel("player") + over) * SKILL_PER_LEVEL - defense
-end
-
-local function EnemyMissChance(over, defense)
-    return math.max(0, math.min(100, 5 - EnemyGap(over, defense) * 0.04))
-end
-
-local function EnemyCritChance(over, defense)
-    return math.max(0, math.min(100, 5 + EnemyGap(over, defense) * 0.04))
-end
-
-local function EnemyCrushChance(over, defense)
-    local gap = EnemyGap(over, math.min(defense, UnitLevel("player") * SKILL_PER_LEVEL))
-    if gap < 15 then return 0 end
-    return math.max(0, math.min(100, gap * 2 - 15))
-end
+-- An enemy `over` levels up attacking you: its misses, crits and crushing blows (FrogLib.Tank,
+-- from Camelot/PaperDollFrameStats.lua).
+local EnemyMissChance, EnemyCritChance, EnemyCrushChance = T.EnemyMissChance, T.EnemyCritChance, T.EnemyCrushChance
 
 -- "40/45", yellow while it's below the cap.
 local function SkillText(cur, max)
@@ -592,19 +529,8 @@ local spell = {
 -- Defense
 ------------------------------------------------------------------------------
 
--- The share of a physical hit armor takes off, against an enemy of your level (plus `over`).
--- Forever's client works it out (C_PaperDollInfo.GetArmorEffectiveness gave 24.20% for 372 armor
--- at level 9, as its own sheet says); Classic's rule, which it matches, is the fallback.
-local function ArmorReduction(armor, over)
-    local level = UnitLevel("player") + (over or 0)
-    local api = C_PaperDollInfo and C_PaperDollInfo.GetArmorEffectiveness
-    if api then
-        local ok, r = pcall(api, armor, level)
-        if ok and type(r) == "number" and not issecret(r) then return r end
-    end
-    local r = armor / (armor + 400 + 85 * level)
-    return math.min(0.75, math.max(0, r))
-end
+-- The share of a physical hit armor takes off, against an enemy of your level (plus `over`): FrogLib.Tank.
+local ArmorReduction = T.ArmorReduction
 
 local RESISTS = { { 2, "Fire", "ff8040" }, { 3, "Nat", "4cff4c" }, { 4, "Frost", "80d0ff" },
     { 5, "Shad", "b080ff" }, { 6, "Arc", "ff80ff" } }
@@ -654,14 +580,7 @@ local defense = {
 -- (Camelot/PaperDollFrameStats.lua and Camelot/SkillsFrame.lua).
 ------------------------------------------------------------------------------
 
-local function ArmorNow()
-    local _, effective = UnitArmor("player")
-    return N(effective)
-end
-
-local function MeleeHit()
-    return GetHitModifier and N(GetHitModifier() or 0) or 0
-end
+local ArmorNow, MeleeHit = T.ArmorNow, T.MeleeHit
 
 -- Your main hand's paper DPS, plus the off hand's when dual wielding.
 local function PaperDPS()
@@ -672,22 +591,10 @@ local function PaperDPS()
     return dps
 end
 
--- Forever's tables for an enemy 0-3 levels up, for a capped weapon skill: your chance to miss
--- it, and its chance to dodge you.
-local MELEE_MISS = { [0] = 5.0, 5.2, 5.4, 9.0 }
+-- Forever's table for an enemy 0-3 levels up, for a capped weapon skill: its chance to dodge you.
+-- (Your chance to miss it, and the hit that means never missing: FrogLib.Tank.)
 local ENEMY_DODGE = { [0] = 5.0, 5.5, 6.0, 6.5 }
-
-local function SkillShort(skill)
-    return math.max(0, UnitLevel("player") * SKILL_PER_LEVEL - skill)
-end
-
--- The hit chance that means never missing an enemy `over` levels up.
-local function HitNeeded(over)
-    local level = UnitLevel("player")
-    local skill = WeaponSkill(INVSLOT_MAINHAND or 16) or level * SKILL_PER_LEVEL
-    local _, offSpeed = UnitAttackSpeed("player")
-    return MELEE_MISS[over] + SkillShort(skill) * 0.04 + (offSpeed and 19 or 0)
-end
+local SkillShort, HitNeeded = T.SkillShort, T.HitNeeded
 
 -- Where your auto-attacks go against an enemy `over` levels up, in the game's order: misses,
 -- dodges, glancing blows, crits, and ordinary hits from what's left. Percentages, plus `mult`:
@@ -714,28 +621,8 @@ local function SwingTable(over)
     return t
 end
 
--- What happens to an enemy's swing at you, `over` levels up: misses, your dodges, parries and
--- blocks (each level up takes 0.2% off those), its crits and crushing blows, and plain hits.
-local function IncomingTable(over)
-    local def = DefenseSkill() or UnitLevel("player") * SKILL_PER_LEVEL
-    local drop = over * SKILL_PER_LEVEL * 0.04
-    local left = 100
-    local function take(v)
-        v = math.max(0, math.min(left, v))
-        left = left - v
-        return v
-    end
-    local parry, block = N(GetParryChance()), N(GetBlockChance())
-    local t = {}
-    t.miss = take(EnemyMissChance(over, def))
-    t.dodge = take(N(GetDodgeChance()) - drop)
-    t.parry = take(parry > 0 and parry - drop or 0)
-    t.block = take(block > 0 and block - drop or 0)
-    t.crit = take(EnemyCritChance(over, def))
-    t.crush = take(EnemyCrushChance(over, def))
-    t.hit = left
-    return t
-end
+-- What happens to an enemy's swing at you, `over` levels up: FrogLib.Tank.
+local IncomingTable = T.IncomingTable
 
 -- Spells miss an enemy 0-3 levels up 4 / 5 / 6 / 17% of the time, less your spell hit.
 local SPELL_MISS = { [0] = 4, 5, 6, 17 }

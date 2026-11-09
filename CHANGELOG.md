@@ -1,5 +1,10 @@
 # StatSheet
 
+## 0.4.1
+
+- Before you equip: a one-hand weapon is compared with your main-hand weapon, not your shield or off-hand item (unless you're dual wielding).
+- Under the hood: its combat maths now lives in FrogLib, shared with other add-ons.
+
 ## 0.4.0
 
 - **Auto** on the Melee / Caster switch, now the default: mages, priests and warlocks see caster numbers, warriors, rogues and hunters melee, a druid follows its form (cat and bear are melee), and a shaman or paladin goes by whether their spell power or attack power is the bigger part. Picking Melee or Caster still sticks, and a choice you'd already made is kept.
