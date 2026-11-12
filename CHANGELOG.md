@@ -1,5 +1,9 @@
 # StatSheet
 
+## 0.4.2
+
+- Before you equip: a ring or trinket is now compared with both of the ones you wear, a block for each, so you can see which to swap out. To see only the weaker one, as before, turn off "Compare a ring or trinket with both you wear" in the settings.
+
 ## 0.4.1
 
 - Before you equip: a one-hand weapon is compared with your main-hand weapon, not your shield or off-hand item (unless you're dual wielding).

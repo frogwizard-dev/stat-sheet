@@ -71,19 +71,31 @@ local function OnTooltip(tooltip)
     local ok = pcall(function()
         local _, link = tooltip:GetItem()
         if not link or C_Item.IsEquippedItem(link) then return end
-        local slot, old, names = T.Replaced(link)
-        if not slot then return end
-        local lines = Changes(link, old, slot)
-        local oldName = #names > 0 and table.concat(names, " + ") or nil
-        tooltip:AddLine(" ")
-        tooltip:AddLine(oldName and ("StatSheet: instead of " .. oldName) or "StatSheet: in an empty slot", 1, 0.78, 0.25)
-        if #lines == 0 then
-            tooltip:AddLine("No change to your stats", 0.6, 0.6, 0.6)
+        local each
+        if ns.db.compareBoth == false then
+            local slot, old, names = T.Replaced(link)
+            each = slot and { { slot = slot, old = old, names = names } } or {}
+        else
+            -- A ring or trinket with both worn: a block for each.
+            each = T.ReplacedEach(link)
         end
-        for _, l in ipairs(lines) do
-            local c = l[3] and ns.GOOD or ns.BAD
-            local r, g, b = c[1], c[2], c[3]
-            tooltip:AddDoubleLine(l[1], l[2], 0.75, 0.75, 0.75, r, g, b)
+        if #each == 0 then return end
+        -- The same item in both slots: say which is which.
+        local same = #each > 1 and each[1].names[1] == each[2].names[1]
+        for i, e in ipairs(each) do
+            local lines = Changes(link, e.old, e.slot)
+            local oldName = #e.names > 0 and table.concat(e.names, " + ") or nil
+            if oldName and same then oldName = oldName .. (i == 1 and " (first)" or " (second)") end
+            tooltip:AddLine(" ")
+            tooltip:AddLine(oldName and ("StatSheet: instead of " .. oldName) or "StatSheet: in an empty slot", 1, 0.78, 0.25)
+            if #lines == 0 then
+                tooltip:AddLine("No change to your stats", 0.6, 0.6, 0.6)
+            end
+            for _, l in ipairs(lines) do
+                local c = l[3] and ns.GOOD or ns.BAD
+                local r, g, b = c[1], c[2], c[3]
+                tooltip:AddDoubleLine(l[1], l[2], 0.75, 0.75, 0.75, r, g, b)
+            end
         end
     end)
     if ok then tooltip:Show() end
