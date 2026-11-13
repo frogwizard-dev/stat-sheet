@@ -1,53 +1,49 @@
 local _, ns = ...
 
--- What the panel shows: sections of cells, each cell a label and a getter.
---   get() returns the value text, or false to leave the cell out (nothing to show, e.g. no
---   off-hand weapon). A second return of true marks a zero the "Hide zeros" setting may drop.
---   tip(tt) adds lines to GameTooltip when the cell is hovered (optional).
---   wide = true takes a whole row; other cells pair up two to a row.
--- Combat values can be secret on this client. Getters read numbers through N(), which raises on
--- a secret, and the panel runs every getter in pcall: a cell that can't be read keeps its last
--- readable text (dimmed) instead of breaking.
+-- What the panel shows: sections of cells, each a label and a getter. Combat values can be secret on
+-- this client, so getters read numbers through Known(), which raises on a secret, and the panel runs
+-- every getter in pcall: a cell that can't be read keeps its last readable text (dimmed).
+-- Cell = { label, get(), tip(tooltip), wide }; see Panel.lua for what get() may return.
 
 local issecret = FrogLib.issecret
-local T = FrogLib.Tank -- the combat maths, shared with other add-ons
+local Tank = FrogLib.Tank -- the combat maths, shared with other add-ons
 
-local function N(v)
-    if issecret(v) or v == nil then error("unreadable", 0) end
-    return v
+local function Known(value)
+    if issecret(value) or value == nil then error("unreadable", 0) end
+    return value
 end
-ns.N = N
+ns.Known = Known
 
 local GREEN, RED, GREY, WHITE = "|cff40ff40", "|cffff4040", "|cff8c8c8c", "|cffffffff"
 
 -- 5.43% / 5% (no trailing zeros).
-local function Pct(v)
-    local s = string.format("%.2f", N(v)):gsub("0+$", ""):gsub("%.$", "")
-    return s .. "%"
+local function Percent(value)
+    local text = string.format("%.2f", Known(value)):gsub("0+$", ""):gsub("%.$", "")
+    return text .. "%"
 end
 
-local function Num(v)
-    v = N(v)
-    return BreakUpLargeNumbers and BreakUpLargeNumbers(v) or tostring(v)
+local function Number(value)
+    value = Known(value)
+    return BreakUpLargeNumbers and BreakUpLargeNumbers(value) or tostring(value)
 end
 
 -- 37.5 / 37 (one decimal, only when there is one).
-local function Dec(v)
-    return (string.format("%.1f", N(v)):gsub("%.0$", ""))
+local function OneDecimal(value)
+    return (string.format("%.1f", Known(value)):gsub("%.0$", ""))
 end
 
 -- A value tinted the way Blizzard tints buffed (green) and debuffed (red) stats.
-local function Tinted(text, pos, neg)
-    if neg and neg < 0 then return RED .. text .. "|r" end
-    if pos and pos > 0 then return GREEN .. text .. "|r" end
+local function Tinted(text, bonus, penalty)
+    if penalty and penalty < 0 then return RED .. text .. "|r" end
+    if bonus and bonus > 0 then return GREEN .. text .. "|r" end
     return text
 end
 
-local function Line(tt, left, right)
+local function Line(tooltip, left, right)
     if right then
-        tt:AddDoubleLine(left, right, 1, 0.82, 0, 1, 1, 1)
+        tooltip:AddDoubleLine(left, right, 1, 0.82, 0, 1, 1, 1)
     else
-        tt:AddLine(left, 1, 1, 1, true)
+        tooltip:AddLine(left, 1, 1, 1, true)
     end
 end
 
@@ -58,22 +54,23 @@ end
 local POWER_LABEL = { [0] = MANA or "Mana", [1] = RAGE or "Rage", [3] = ENERGY or "Energy" }
 
 local function DisplayPower()
-    local pType, token = UnitPowerType("player")
-    return N(pType), (token and _G[token]) or POWER_LABEL[pType] or token or "Power"
+    local powerType, token = UnitPowerType("player")
+    return Known(powerType), (token and _G[token]) or POWER_LABEL[powerType] or token or "Power"
 end
 
+-- Your gear's durability: the share left of all of it, and the most worn piece's share.
 local function Durability()
-    local cur, max, low = 0, 0, nil
+    local now, full, worst = 0, 0, nil
     for slot = 1, 19 do
-        local c, m = GetInventoryItemDurability(slot)
-        if c and m and m > 0 then
-            cur, max = cur + c, max + m
-            local p = c / m
-            if not low or p < low then low = p end
+        local slotNow, slotFull = GetInventoryItemDurability(slot)
+        if slotNow and slotFull and slotFull > 0 then
+            now, full = now + slotNow, full + slotFull
+            local share = slotNow / slotFull
+            if not worst or share < worst then worst = share end
         end
     end
-    if max == 0 then return nil end
-    return cur / max, low
+    if full == 0 then return nil end
+    return now / full, worst
 end
 
 ------------------------------------------------------------------------------
@@ -102,8 +99,8 @@ local function GearTotals()
         if link then
             items = items + 1
             local stats = C_Item.GetItemStats(link)
-            for k, v in pairs(stats or {}) do
-                if type(v) == "number" then totals[k] = (totals[k] or 0) + v end
+            for stat, amount in pairs(stats or {}) do
+                if type(amount) == "number" then totals[stat] = (totals[stat] or 0) + amount end
             end
         end
     end
@@ -113,17 +110,17 @@ end
 -- "+1 Str  +2 Agi  +10 SP  258 Armor", in GEAR_STATS order, with like labels added together.
 local function GearSummary(totals)
     local sums, order = {}, {}
-    for _, s in ipairs(GEAR_STATS) do
-        local v = totals[s[1]]
-        if v and v ~= 0 then
-            if not sums[s[2]] then order[#order + 1] = s[2] end
-            sums[s[2]] = (sums[s[2]] or 0) + v
+    for _, stat in ipairs(GEAR_STATS) do
+        local amount = totals[stat[1]]
+        if amount and amount ~= 0 then
+            if not sums[stat[2]] then order[#order + 1] = stat[2] end
+            sums[stat[2]] = (sums[stat[2]] or 0) + amount
         end
     end
     local parts = {}
     for _, label in ipairs(order) do
-        local v = sums[label]
-        parts[#parts + 1] = label == "Armor" and string.format("%d Armor", v) or string.format("%+d %s", v, label)
+        local amount = sums[label]
+        parts[#parts + 1] = label == "Armor" and string.format("%d Armor", amount) or string.format("%+d %s", amount, label)
     end
     return parts
 end
@@ -133,24 +130,24 @@ local general = {
     cells = {
         -- Rage or energy while it's the bar in use (a druid in bear or cat form).
         { label = function() return select(2, DisplayPower()) end, get = function()
-            local pType = DisplayPower()
-            if pType == 0 then return false end
-            return Num(UnitPowerMax("player", pType))
+            local powerType = DisplayPower()
+            if powerType == 0 then return false end
+            return Number(UnitPowerMax("player", powerType))
         end },
         -- Energy per second while energy is the bar in use (cat form, rogues).
         { label = function() return STAT_ENERGY_REGEN or "Energy Regen" end, get = function()
             local _, token = UnitPowerType("player")
             if token ~= "ENERGY" or not GetPowerRegen then return false end
-            return Dec(GetPowerRegen()) .. "/s"
+            return OneDecimal(GetPowerRegen()) .. "/s"
         end },
         { label = "Speed", get = function()
             local _, run = GetUnitSpeed("player")
-            return string.format("%d%%", N(run) / (BASE_MOVEMENT_SPEED or 7) * 100 + 0.5)
-        end, tip = function(tt)
-            local _, run, flight, swim = GetUnitSpeed("player")
+            return string.format("%d%%", Known(run) / (BASE_MOVEMENT_SPEED or 7) * 100 + 0.5)
+        end, tip = function(tooltip)
+            local _, run, _, swim = GetUnitSpeed("player")
             local base = BASE_MOVEMENT_SPEED or 7
-            Line(tt, "Run", string.format("%d%%", N(run) / base * 100 + 0.5))
-            Line(tt, "Swim", string.format("%d%%", N(swim) / base * 100 + 0.5))
+            Line(tooltip, "Run", string.format("%d%%", Known(run) / base * 100 + 0.5))
+            Line(tooltip, "Swim", string.format("%d%%", Known(swim) / base * 100 + 0.5))
         end },
     },
 }
@@ -170,76 +167,82 @@ local AGI_RAP = { HUNTER = 2, ROGUE = 1, WARRIOR = 1 }
 local function Class() return select(2, UnitClass("player")) end
 
 -- Attack power from a stat (the client's sum) and stat functions' numbers: FrogLib.Tank.
-local StatAP, Call = T.StatAP, T.Call
+local StatAP, Call = Tank.StatAP, Tank.Call
+
+-- Ranged attack power from a stat: the client's sum, else the class's rate.
+local function StatRAP(statIndex, stat)
+    local fromClient = Call(GetRangedAttackPowerForStat, statIndex, stat)
+    if fromClient then return fromClient end
+    local rate = statIndex == 2 and AGI_RAP[Class()]
+    return rate and stat * rate or 0
+end
 
 -- The same as Forever's own attribute tooltips (Camelot/PaperDollFrameStats.lua,
 -- PaperDollFrame_SetStatTooltip2), with the client's functions it uses.
-local function Gives(i, stat)
-    local class, out = Class(), {}
-    local function add(fmt, v) out[#out + 1] = string.format(fmt, v) end
-    if i == 1 then
-        add("+%d AP", StatAP(1, stat) or stat * (STR_AP[class] or 1))
+local function Gives(statIndex, stat)
+    local class, gives = Class(), {}
+    local function Add(template, value) gives[#gives + 1] = string.format(template, value) end
+    if statIndex == 1 then
+        Add("+%d AP", StatAP(1, stat) or stat * (STR_AP[class] or 1))
         -- Each 20 Strength adds 1 to a shield's block value.
-        if (Call(GetBlockChance) or 0) > 0 then add("+%d block value", math.floor(stat / 20)) end
-    elseif i == 2 then
+        if (Call(GetBlockChance) or 0) > 0 then Add("+%d block value", math.floor(stat / 20)) end
+    elseif statIndex == 2 then
         local crit = Call(GetCritChanceFromStat, 2, stat) -- a fraction
-        if crit and crit > 0 then add("+%.1f%% crit", crit * 100) end
-        local ap = StatAP(2, stat)
-        if ap and ap > 0 then
-            add("+%d AP", ap)
+        if crit and crit > 0 then Add("+%.1f%% crit", crit * 100) end
+        local attackPower = StatAP(2, stat)
+        if attackPower and attackPower > 0 then
+            Add("+%d AP", attackPower)
         elseif AGI_AP[class] then
-            add("+%d AP", stat * AGI_AP[class])
+            Add("+%d AP", stat * AGI_AP[class])
         end
-        if class == "DRUID" then add("+%d cat AP", stat) end
-        if AGI_RAP[class] then
-            add("+%d RAP", Call(GetRangedAttackPowerForStat, 2, stat) or stat * AGI_RAP[class])
-        end
+        if class == "DRUID" then Add("+%d cat AP", stat) end
+        if AGI_RAP[class] then Add("+%d RAP", StatRAP(2, stat)) end
         local dodge = Call(GetDodgeChanceFromAttribute) -- a fraction
-        if dodge and dodge > 0 then add("+%.1f%% dodge", dodge * 100) end
-        add("+%d armor", stat * 2)
-    elseif i == 3 then
+        if dodge and dodge > 0 then Add("+%.1f%% dodge", dodge * 100) end
+        Add("+%d armor", stat * 2)
+    elseif statIndex == 3 then
         local first = STAMINA_BREAK or 20
-        local per = Call(UnitHPPerStamina, "player") or 10
-        add("+%d HP", math.min(first, stat) + math.max(0, stat - first) * per)
-    elseif i == 4 then
+        local perPoint = Call(UnitHPPerStamina, "player") or 10
+        Add("+%d HP", math.min(first, stat) + math.max(0, stat - first) * perPoint)
+    elseif statIndex == 4 then
         if (UnitPowerMax("player", 0) or 0) > 0 then
             local first = INTELLECT_BREAK or 20
-            add("+%d mana", math.min(first, stat) + math.max(0, stat - first) * (MANA_PER_INTELLECT or 15))
+            Add("+%d mana", math.min(first, stat) + math.max(0, stat - first) * (MANA_PER_INTELLECT or 15))
         end
         local crit = Call(GetSpellCritChanceFromStat, 4, stat) -- a fraction
-        if crit and crit > 0 then add("+%.1f%% spell crit", crit * 100) end
-    elseif i == 5 then
+        if crit and crit > 0 then Add("+%.1f%% spell crit", crit * 100) end
+    elseif statIndex == 5 then
         -- Per second; health from Spirit is a quarter lower standing than sitting.
-        local hp = Call(GetHealthRegenFromSpirit)
-        if hp and hp > 0 then add("+%d hp5", hp * 0.75 * 5) end
+        local health = Call(GetHealthRegenFromSpirit)
+        if health and health > 0 then Add("+%d hp5", health * 0.75 * 5) end
         local mana = (UnitPowerMax("player", 0) or 0) > 0 and Call(GetManaRegenFromSpirit)
-        if mana and mana > 0 then add("+%d mp5", mana * 5) end
+        if mana and mana > 0 then Add("+%d mp5", mana * 5) end
     end
-    return out
+    return gives
 end
 
-local function StatCell(i)
-    local name = _G["SPELL_STAT" .. i .. "_NAME"] or STAT_NAMES[i]
+local function StatCell(statIndex)
+    local name = _G["SPELL_STAT" .. statIndex .. "_NAME"] or STAT_NAMES[statIndex]
     return {
         label = name,
-        -- A whole row with what the stat gives, or half a row with just the number.
+        -- A whole row with what the stat gives, or half a row with only the number.
         wide = function() return ns.db.attrEffects end,
         get = function()
-            local _, stat, pos, neg = UnitStat("player", i)
-            local text = Tinted(Num(stat), N(pos), N(neg))
+            local _, stat, bonus, penalty = UnitStat("player", statIndex)
+            local text = Tinted(Number(stat), Known(bonus), Known(penalty))
             if not ns.db.attrEffects then return text end
-            return text, false, table.concat(Gives(i, N(stat)), "  ")
+            return text, false, table.concat(Gives(statIndex, Known(stat)), "  ")
         end,
-        tip = function(tt)
-            local base, stat, pos, neg = UnitStat("player", i)
-            Line(tt, "Total", Num(stat))
-            Line(tt, "Base", Num(base))
-            if N(pos) > 0 then Line(tt, "Bonus", GREEN .. "+" .. Num(pos) .. "|r") end
-            if N(neg) < 0 then Line(tt, "Penalty", RED .. Num(neg) .. "|r") end
-            local gives = Gives(i, N(stat))
+        tip = function(tooltip)
+            local base, stat, bonus, penalty = UnitStat("player", statIndex)
+            Line(tooltip, "Total", Number(stat))
+            Line(tooltip, "Base", Number(base))
+            if Known(bonus) > 0 then Line(tooltip, "Bonus", GREEN .. "+" .. Number(bonus) .. "|r") end
+            if Known(penalty) < 0 then Line(tooltip, "Penalty", RED .. Number(penalty) .. "|r") end
+            local gives = Gives(statIndex, Known(stat))
             if #gives > 0 then
-                Line(tt, " ")
-                for _, g in ipairs(gives) do Line(tt, g) end
+                Line(tooltip, " ")
+                for _, give in ipairs(gives) do Line(tooltip, give) end
             end
         end,
     }
@@ -255,31 +258,29 @@ local attributes = {
 ------------------------------------------------------------------------------
 
 -- Each 14 attack power adds 1 damage per second to a weapon (Classic's rule).
-local AP_PER_DPS = T.AP_PER_DPS
+local AP_PER_DPS = Tank.AP_PER_DPS
 
 -- Weapon and defense skill, the way Forever's sheet finds them: FrogLib.Tank.
-local SKILL_PER_LEVEL = T.SKILL_PER_LEVEL
-local WeaponSkill, DefenseSkill = T.WeaponSkill, T.DefenseSkill
+local SKILL_PER_LEVEL = Tank.SKILL_PER_LEVEL
+local WeaponSkill, DefenseSkill = Tank.WeaponSkill, Tank.DefenseSkill
 
--- Forever's weapon skill rules (Camelot/SkillsFrame.lua): each point of weapon skill short of
--- the enemy's defense (its level x 5) costs 0.04% chance to hit and to crit, and against raid
--- bosses (3 levels up) a share of hits glance for less.
+-- Forever's weapon skill rules (Camelot/SkillsFrame.lua): each point short of the enemy's defense (its
+-- level x 5) costs 0.04% chance to hit and to crit, and against raid bosses some hits glance for less.
 local function SkillGap(over, skill)
     return (UnitLevel("player") + over) * SKILL_PER_LEVEL - skill
 end
 
--- The released game works glancing blows out itself (GetGlancingBlowChance/Penalty, taking your
--- weapon skill and the enemy's defense, as fractions); the formulas below are the beta's, for
--- clients without them.
+-- The released game works glancing blows out itself (GetGlancingBlowChance/Penalty, from your skill
+-- and the enemy's defense, as fractions); the formulas below are the beta's, for clients without them.
 local function EnemyDefense(over)
     return (UnitLevel("player") + over) * SKILL_PER_LEVEL
 end
 
 local function GlancingChance(over, skill)
     if GetGlancingBlowChance then
-        local ok, v = pcall(GetGlancingBlowChance, skill, EnemyDefense(over))
-        v = ok and N(v)
-        if v then return math.max(0, math.min(100, v * 100)) end
+        local ok, chance = pcall(GetGlancingBlowChance, skill, EnemyDefense(over))
+        chance = ok and Known(chance)
+        if chance then return math.max(0, math.min(100, chance * 100)) end
     end
     skill = math.min(UnitLevel("player") * SKILL_PER_LEVEL, skill)
     return math.max(-100, math.min(100, (0.02 * SkillGap(over, skill) + 0.1) * 100))
@@ -287,9 +288,9 @@ end
 
 local function GlancingPenalty(over, skill)
     if GetGlancingBlowPenalty then
-        local ok, v = pcall(GetGlancingBlowPenalty, skill, EnemyDefense(over))
-        v = ok and N(v)
-        if v then return math.max(0, math.min(100, v * 100)) end
+        local ok, penalty = pcall(GetGlancingBlowPenalty, skill, EnemyDefense(over))
+        penalty = ok and Known(penalty)
+        if penalty then return math.max(0, math.min(100, penalty * 100)) end
     end
     local gap = SkillGap(over, skill)
     local low = 1.30 - 0.05 * gap
@@ -304,83 +305,83 @@ end
 
 -- An enemy `over` levels up attacking you: its misses, crits and crushing blows (FrogLib.Tank,
 -- from Camelot/PaperDollFrameStats.lua).
-local EnemyMissChance, EnemyCritChance, EnemyCrushChance = T.EnemyMissChance, T.EnemyCritChance, T.EnemyCrushChance
+local EnemyMissChance, EnemyCritChance, EnemyCrushChance = Tank.EnemyMissChance, Tank.EnemyCritChance, Tank.EnemyCrushChance
 
 -- "40/45", yellow while it's below the cap.
-local function SkillText(cur, max)
-    local text = cur .. "/" .. max
-    if cur < max then return "|cffffd040" .. text .. "|r" end
+local function SkillText(current, maximum)
+    local text = current .. "/" .. maximum
+    if current < maximum then return "|cffffd040" .. text .. "|r" end
     return text
 end
 
-local function WeaponText(min, max, speed)
-    min, max, speed = N(min), N(max), N(speed)
+local function WeaponText(low, high, speed)
+    low, high, speed = Known(low), Known(high), Known(speed)
     if speed <= 0 then return false end
-    local dps = (min + max) / 2 / speed
+    local dps = (low + high) / 2 / speed
     return string.format("%d-%d  %s%.2fs|r  %s%.1f|r dps",
-        math.max(1, math.floor(min)), math.max(1, math.ceil(max)), GREY, speed, WHITE, dps)
+        math.max(1, math.floor(low)), math.max(1, math.ceil(high)), GREY, speed, WHITE, dps)
 end
 
-local function WeaponTip(tt, min, max, speed, ap)
-    min, max, speed = N(min), N(max), N(speed)
-    Line(tt, "Damage", string.format("%d - %d", math.max(1, math.floor(min)), math.max(1, math.ceil(max))))
-    Line(tt, "Average hit", string.format("%.1f", (min + max) / 2))
-    Line(tt, "Speed", string.format("%.2f s", speed))
-    Line(tt, "Damage per second", string.format("%.1f", (min + max) / 2 / speed))
-    Line(tt, " ")
-    if ap then
-        Line(tt, string.format("Includes %.1f dps from attack power.", N(ap) / AP_PER_DPS))
+local function WeaponTip(tooltip, low, high, speed, attackPower)
+    low, high, speed = Known(low), Known(high), Known(speed)
+    Line(tooltip, "Damage", string.format("%d - %d", math.max(1, math.floor(low)), math.max(1, math.ceil(high))))
+    Line(tooltip, "Average hit", string.format("%.1f", (low + high) / 2))
+    Line(tooltip, "Speed", string.format("%.2f s", speed))
+    Line(tooltip, "Damage per second", string.format("%.1f", (low + high) / 2 / speed))
+    Line(tooltip, " ")
+    if attackPower then
+        Line(tooltip, string.format("Includes %.1f dps from attack power.", Known(attackPower) / AP_PER_DPS))
     end
-    Line(tt, "|cff8c8c8cWorked out from the exact damage. The game's own sheet rounds the damage "
+    Line(tooltip, "|cff8c8c8cWorked out from the exact damage. The game's own sheet rounds the damage "
         .. "first, so its DPS can read a little lower.|r")
 end
 
 local function MeleeAP()
-    local base, pos, neg = UnitAttackPower("player")
-    return N(base) + N(pos) + N(neg), N(pos), N(neg)
+    local base, bonus, penalty = UnitAttackPower("player")
+    return Known(base) + Known(bonus) + Known(penalty), Known(bonus), Known(penalty)
 end
 
 local function RangedAP()
-    local base, pos, neg = UnitRangedAttackPower("player")
-    return N(base) + N(pos) + N(neg), N(pos), N(neg)
+    local base, bonus, penalty = UnitRangedAttackPower("player")
+    return Known(base) + Known(bonus) + Known(penalty), Known(bonus), Known(penalty)
 end
 
-local function APText(total, pos, neg)
-    return Tinted(Num(total), pos, neg), false, string.format("+%.1f dps", total / AP_PER_DPS)
+local function APText(total, bonus, penalty)
+    return Tinted(Number(total), bonus, penalty), false, string.format("+%.1f dps", total / AP_PER_DPS)
 end
 
-local function Haste(v) return Pct(v), N(v) == 0 end
+local function Haste(value) return Percent(value), Known(value) == 0 end
 
 local melee = {
     key = "melee", title = "Melee", colorKey = "Attack",
     cells = {
         { label = "Main Hand", wide = true, get = function()
-            local min, max = UnitDamage("player")
-            return WeaponText(min, max, (UnitAttackSpeed("player")))
-        end, tip = function(tt)
-            local min, max = UnitDamage("player")
-            WeaponTip(tt, min, max, (UnitAttackSpeed("player")), (MeleeAP()))
+            local low, high = UnitDamage("player")
+            return WeaponText(low, high, (UnitAttackSpeed("player")))
+        end, tip = function(tooltip)
+            local low, high = UnitDamage("player")
+            WeaponTip(tooltip, low, high, (UnitAttackSpeed("player")), (MeleeAP()))
         end },
         { label = "Off Hand", wide = true, get = function()
             local _, offSpeed = UnitAttackSpeed("player")
             if not offSpeed then return false end
-            local _, _, min, max = UnitDamage("player")
-            return WeaponText(min, max, offSpeed)
-        end, tip = function(tt)
+            local _, _, low, high = UnitDamage("player")
+            return WeaponText(low, high, offSpeed)
+        end, tip = function(tooltip)
             local _, offSpeed = UnitAttackSpeed("player")
-            local _, _, min, max = UnitDamage("player")
-            WeaponTip(tt, min, max, offSpeed, (MeleeAP()))
+            local _, _, low, high = UnitDamage("player")
+            WeaponTip(tooltip, low, high, offSpeed, (MeleeAP()))
         end },
         { label = "Attack Power", wide = true, get = function() return APText(MeleeAP()) end,
-          tip = function(tt)
+          tip = function(tooltip)
             local total = MeleeAP()
-            Line(tt, string.format("Adds %.1f damage per second to your melee weapons.", total / AP_PER_DPS))
+            Line(tooltip, string.format("Adds %.1f damage per second to your melee weapons.", total / AP_PER_DPS))
         end },
-        { label = "Crit", get = function() return Pct(GetCritChance()) end },
+        { label = "Crit", get = function() return Percent(GetCritChance()) end },
         { label = "Hit", get = function()
             if not GetHitModifier then return false end
-            local v = GetHitModifier() or 0
-            return "+" .. Pct(v), N(v) == 0
+            local hit = GetHitModifier() or 0
+            return "+" .. Percent(hit), Known(hit) == 0
         end },
         { label = "Haste", get = function()
             if not GetMeleeHaste then return false end
@@ -399,7 +400,12 @@ end
 
 local function RangedHaste()
     local haste, quiver = GetRangedHaste()
-    return N(haste) + N(quiver or 0)
+    return Known(haste) + Known(quiver or 0)
+end
+
+local function RangedHit()
+    if not GetRangedHitModifier then return Tank.MeleeHit() end
+    return Known(GetRangedHitModifier() or 0)
 end
 
 local ranged = {
@@ -411,14 +417,18 @@ local ranged = {
             local subclass = id and select(7, C_Item.GetItemInfoInstant(id))
             return subclass == Enum.ItemWeaponSubclass.Wand and "Wand" or "Ranged"
         end, wide = true, get = function()
-            local speed, min, max = UnitRangedDamage("player")
-            return WeaponText(min, max, speed)
-        end, tip = function(tt)
-            local speed, min, max = UnitRangedDamage("player")
-            WeaponTip(tt, min, max, speed, (RangedAP()))
+            local speed, low, high = UnitRangedDamage("player")
+            return WeaponText(low, high, speed)
+        end, tip = function(tooltip)
+            local speed, low, high = UnitRangedDamage("player")
+            WeaponTip(tooltip, low, high, speed, (RangedAP()))
         end },
         { label = "Attack Power", wide = true, get = function() return APText(RangedAP()) end },
-        { label = "Crit", get = function() return Pct(GetRangedCritChance()) end },
+        { label = "Crit", get = function() return Percent(GetRangedCritChance()) end },
+        { label = "Hit", get = function()
+            local hit = RangedHit()
+            return "+" .. Percent(hit), hit == 0
+        end },
         { label = "Haste", get = function()
             if not GetRangedHaste then return false end
             return Haste(RangedHaste())
@@ -436,21 +446,21 @@ local SCHOOLS = {
 }
 
 -- The best school and whether all schools agree (then there's no point listing them).
-local function BestSchool(fn)
+local function BestSchool(SchoolValue)
     local best, same, first = nil, true, nil
-    for _, s in ipairs(SCHOOLS) do
-        local v = N(fn(s[1]))
-        if first == nil then first = v elseif v ~= first then same = false end
-        if not best or v > best then best = v end
+    for _, school in ipairs(SCHOOLS) do
+        local value = Known(SchoolValue(school[1]))
+        if first == nil then first = value elseif value ~= first then same = false end
+        if not best or value > best then best = value end
     end
     return best, same
 end
 
-local function SchoolTip(tt, fn, fmt)
-    local _, same = BestSchool(fn)
+local function SchoolTip(tooltip, SchoolValue, Format)
+    local _, same = BestSchool(SchoolValue)
     if same then return end
-    for _, s in ipairs(SCHOOLS) do
-        Line(tt, "|cff" .. s[3] .. s[2] .. "|r", fmt(fn(s[1])))
+    for _, school in ipairs(SCHOOLS) do
+        Line(tooltip, "|cff" .. school[3] .. school[2] .. "|r", Format(SchoolValue(school[1])))
     end
 end
 
@@ -465,22 +475,22 @@ local spell = {
     cells = {
         { label = "Damage", get = function()
             local best = BestSchool(GetSpellBonusDamage)
-            return "+" .. Num(best), best == 0
-        end, tip = function(tt)
-            Line(tt, "Bonus damage to your spells.")
-            SchoolTip(tt, GetSpellBonusDamage, function(v) return "+" .. Num(v) end)
+            return "+" .. Number(best), best == 0
+        end, tip = function(tooltip)
+            Line(tooltip, "Bonus damage to your spells.")
+            SchoolTip(tooltip, GetSpellBonusDamage, function(value) return "+" .. Number(value) end)
         end },
         { label = "Healing", get = function()
             if not GetSpellBonusHealing then return false end
-            local v = N(GetSpellBonusHealing())
-            return "+" .. Num(v), v == 0
+            local healing = Known(GetSpellBonusHealing())
+            return "+" .. Number(healing), healing == 0
         end },
-        { label = "Crit", get = function() return Pct((BestSchool(GetSpellCritChance))) end,
-          tip = function(tt) SchoolTip(tt, GetSpellCritChance, Pct) end },
+        { label = "Crit", get = function() return Percent((BestSchool(GetSpellCritChance))) end,
+          tip = function(tooltip) SchoolTip(tooltip, GetSpellCritChance, Percent) end },
         { label = "Hit", get = function()
             if not GetSpellHitModifier then return false end
-            local v = GetSpellHitModifier() or 0
-            return "+" .. Pct(v), N(v) == 0
+            local hit = GetSpellHitModifier() or 0
+            return "+" .. Percent(hit), Known(hit) == 0
         end },
         { label = "Haste", get = function()
             if not UnitSpellHaste then return false end
@@ -490,36 +500,37 @@ local spell = {
         { label = "Mana Regen", wide = true, get = function()
             if not GetManaRegen then return false end
             local base, casting = GetManaRegen()
-            base = N(base)
+            base = Known(base)
             local text = string.format("%s %smp5|r   %s %swhile casting|r",
-                Dec(base * 5), GREY, Dec(N(casting) * 5), GREY)
+                OneDecimal(base * 5), GREY, OneDecimal(Known(casting) * 5), GREY)
             -- A tick when the regen meter (Regen.lua) agrees within 10%, else what it measured.
             local measured = ns.Regen and ns.Regen:Rate("rest")
             if measured and base > 0 then
                 if math.abs(measured - base) <= base * 0.1 then
                     text = text .. " |TInterface\\RaidFrame\\ReadyCheck-Ready:0|t"
                 else
-                    text = string.format("%s |cffffd040(%s measured)|r", text, Dec(measured * 5))
+                    text = string.format("%s |cffffd040(%s measured)|r", text, OneDecimal(measured * 5))
                 end
             end
             return text
-        end, tip = function(tt)
-            Line(tt, "Mana every 5 seconds: the first after 5 seconds without casting, "
+        end, tip = function(tooltip)
+            Line(tooltip, "Mana every 5 seconds: the first after 5 seconds without casting, "
                 .. "the second while you keep casting.")
-            Line(tt, "|cff8c8c8cThe game's own sheet rounds this down (37.5 shows as 37).|r")
-            Line(tt, " ")
-            local rate, ticks, secs = ns.Regen:Rate("rest")
+            Line(tooltip, "|cff8c8c8cThe game's own sheet rounds this down (37.5 shows as 37).|r")
+            Line(tooltip, " ")
+            local rate, ticks, seconds = ns.Regen:Rate("rest")
             if rate then
-                Line(tt, "Measured", string.format("%.1f mp5 (%d ticks, %ds)", rate * 5, ticks, secs))
+                Line(tooltip, "Measured", string.format("%.1f mp5 (%d ticks, %ds)", rate * 5, ticks, seconds))
             else
-                Line(tt, "Not measured yet: spend some mana, then wait without casting until it's "
+                Line(tooltip, "Not measured yet: spend some mana, then wait without casting until it's "
                     .. "back up. A tick means the game's number checked out.")
             end
-            local cRate, cTicks, cSecs = ns.Regen:Rate("casting")
-            if cRate then
-                Line(tt, "Measured while casting", string.format("%.1f mp5 (%d ticks, %ds)", cRate * 5, cTicks, cSecs))
+            local castingRate, castingTicks, castingSeconds = ns.Regen:Rate("casting")
+            if castingRate then
+                Line(tooltip, "Measured while casting", string.format("%.1f mp5 (%d ticks, %ds)",
+                    castingRate * 5, castingTicks, castingSeconds))
             elseif ns.Regen:NoneWhileCasting() then
-                Line(tt, "Measured while casting", "none")
+                Line(tooltip, "Measured while casting", "none")
             end
         end },
     },
@@ -530,7 +541,7 @@ local spell = {
 ------------------------------------------------------------------------------
 
 -- The share of a physical hit armor takes off, against an enemy of your level (plus `over`): FrogLib.Tank.
-local ArmorReduction = T.ArmorReduction
+local ArmorReduction = Tank.ArmorReduction
 
 local RESISTS = { { 2, "Fire", "ff8040" }, { 3, "Nat", "4cff4c" }, { 4, "Frost", "80d0ff" },
     { 5, "Shad", "b080ff" }, { 6, "Arc", "ff80ff" } }
@@ -539,36 +550,36 @@ local defense = {
     key = "defense", title = "Defense", colorKey = "Defense",
     cells = {
         { label = ARMOR or "Armor", wide = true, get = function()
-            local _, effective, _, pos, neg = UnitArmor("player")
-            effective = N(effective)
-            return Tinted(Num(effective), pos and N(pos), neg and N(neg)), false,
+            local _, effective, _, bonus, penalty = UnitArmor("player")
+            effective = Known(effective)
+            return Tinted(Number(effective), bonus and Known(bonus), penalty and Known(penalty)), false,
                 string.format("%.1f%% damage reduction", ArmorReduction(effective) * 100)
-        end, tip = function(tt)
+        end, tip = function(tooltip)
             local _, effective = UnitArmor("player")
-            effective = N(effective)
-            Line(tt, "Physical damage taken off, by enemy level:")
+            effective = Known(effective)
+            Line(tooltip, "Physical damage taken off, by enemy level:")
             local level = UnitLevel("player")
             for over = 0, 3 do
-                Line(tt, "Level " .. (level + over), string.format("%.2f%%", ArmorReduction(effective, over) * 100))
+                Line(tooltip, "Level " .. (level + over), string.format("%.2f%%", ArmorReduction(effective, over) * 100))
             end
-            Line(tt, "|cff8c8c8cArmor can't take off more than 75%.|r")
+            Line(tooltip, "|cff8c8c8cArmor can't take off more than 75%.|r")
         end },
-        { label = "Dodge", get = function() return Pct(GetDodgeChance()) end },
+        { label = "Dodge", get = function() return Percent(GetDodgeChance()) end },
         { label = "Parry", get = function()
-            local v = N(GetParryChance())
-            return Pct(v), v == 0
+            local parry = Known(GetParryChance())
+            return Percent(parry), parry == 0
         end },
         { label = "Block", get = function()
-            local v = N(GetBlockChance())
-            return Pct(v), v == 0
+            local block = Known(GetBlockChance())
+            return Percent(block), block == 0
         end },
         { label = "Resist", wide = true, get = function()
             local parts, any = {}, false
-            for _, r in ipairs(RESISTS) do
-                local _, total = UnitResistance("player", r[1])
-                total = N(total)
+            for _, resist in ipairs(RESISTS) do
+                local _, total = UnitResistance("player", resist[1])
+                total = Known(total)
                 if total ~= 0 then any = true end
-                parts[#parts + 1] = string.format("|cff%s%s|r %d", r[3], r[2], total)
+                parts[#parts + 1] = string.format("|cff%s%s|r %d", resist[3], resist[2], total)
             end
             return table.concat(parts, "  "), not any
         end },
@@ -580,54 +591,88 @@ local defense = {
 -- (Camelot/PaperDollFrameStats.lua and Camelot/SkillsFrame.lua).
 ------------------------------------------------------------------------------
 
-local ArmorNow, MeleeHit = T.ArmorNow, T.MeleeHit
+local ArmorNow, MeleeHit = Tank.ArmorNow, Tank.MeleeHit
 
 -- Your main hand's paper DPS, plus the off hand's when dual wielding.
 local function PaperDPS()
-    local min, max, offMin, offMax = UnitDamage("player")
+    local low, high, offLow, offHigh = UnitDamage("player")
     local speed, offSpeed = UnitAttackSpeed("player")
-    local dps = (N(min) + N(max)) / 2 / N(speed)
-    if offSpeed then dps = dps + (N(offMin) + N(offMax)) / 2 / N(offSpeed) end
+    local dps = (Known(low) + Known(high)) / 2 / Known(speed)
+    if offSpeed then dps = dps + (Known(offLow) + Known(offHigh)) / 2 / Known(offSpeed) end
     return dps
 end
 
 -- Forever's table for an enemy 0-3 levels up, for a capped weapon skill: its chance to dodge you.
 -- (Your chance to miss it, and the hit that means never missing: FrogLib.Tank.)
 local ENEMY_DODGE = { [0] = 5.0, 5.5, 6.0, 6.5 }
-local SkillShort, HitNeeded = T.SkillShort, T.HitNeeded
+local SkillShort, HitNeeded = Tank.SkillShort, Tank.HitNeeded
 
--- Where your auto-attacks go against an enemy `over` levels up, in the game's order: misses,
--- dodges, glancing blows, crits, and ordinary hits from what's left. Percentages, plus `mult`:
--- the share of paper DPS they add up to (glancing blows land for less, crits for double).
+-- Hands out shares of 100% in the game's order, none more than what's left: Take(share), Left().
+local function Shares()
+    local left = 100
+    local function Take(share)
+        share = math.max(0, math.min(left, share))
+        left = left - share
+        return share
+    end
+    return Take, function() return left end
+end
+
+-- Where your auto-attacks go against an enemy `over` levels up, in the game's order (misses, dodges,
+-- glancing blows, crits, hits), as percentages, and `mult`: the share of paper DPS they add up to.
 local function SwingTable(over)
     local level = UnitLevel("player")
     local skill = WeaponSkill(INVSLOT_MAINHAND or 16) or level * SKILL_PER_LEVEL
-    local left = 100
-    local function take(v)
-        v = math.max(0, math.min(left, v))
-        left = left - v
-        return v
-    end
-    local t = {}
-    t.miss = take(HitNeeded(over) - MeleeHit())
-    t.dodge = take(ENEMY_DODGE[over] + SkillShort(skill) * 0.04)
-    t.glance = take(GlancingChance(over, skill))
-    t.glancePenalty = GlancingPenalty(over, skill)
+    local Take, Left = Shares()
+    local swings = {}
+    swings.miss = Take(HitNeeded(over) - MeleeHit())
+    swings.dodge = Take(ENEMY_DODGE[over] + SkillShort(skill) * 0.04)
+    swings.glance = Take(GlancingChance(over, skill))
+    swings.glancePenalty = GlancingPenalty(over, skill)
     -- Crit lost to weapon skill short of the enemy's defense.
-    t.critPenalty = math.max(0, SkillGap(over, skill) * 0.04)
-    t.crit = take(N(GetCritChance()) - t.critPenalty)
-    t.hit = left
-    t.mult = (t.hit + t.crit * 2 + t.glance * (1 - t.glancePenalty / 100)) / 100
-    return t
+    swings.critPenalty = math.max(0, SkillGap(over, skill) * 0.04)
+    swings.crit = Take(Known(GetCritChance()) - swings.critPenalty)
+    swings.hit = Left()
+    swings.mult = (swings.hit + swings.crit * 2 + swings.glance * (1 - swings.glancePenalty / 100)) / 100
+    return swings
+end
+
+-- Your ranged weapon's paper DPS.
+local function RangedPaperDPS()
+    local speed, low, high = UnitRangedDamage("player")
+    return (Known(low) + Known(high)) / 2 / Known(speed)
+end
+
+local function RangedSkill()
+    return WeaponSkill(INVSLOT_RANGED or 18) or UnitLevel("player") * SKILL_PER_LEVEL
+end
+
+-- The hit that means your shots never miss an enemy `over` levels up (dual wielding's penalty is
+-- melee's alone).
+local function ShotHitNeeded(over)
+    return HitNeeded(over, { skill = RangedSkill(), dualWield = false })
+end
+
+-- Where your ranged auto-attacks go, like SwingTable. Forever's own weapon skill tooltip gives
+-- shots only a chance to hit and to crit: they aren't dodged, parried or glancing.
+local function ShotTable(over)
+    local Take, Left = Shares()
+    local shots = {}
+    shots.miss = Take(ShotHitNeeded(over) - RangedHit())
+    shots.critPenalty = math.max(0, SkillGap(over, RangedSkill()) * 0.04)
+    shots.crit = Take(Known(GetRangedCritChance()) - shots.critPenalty)
+    shots.hit = Left()
+    shots.mult = (shots.hit + shots.crit * 2) / 100
+    return shots
 end
 
 -- What happens to an enemy's swing at you, `over` levels up: FrogLib.Tank.
-local IncomingTable = T.IncomingTable
+local IncomingTable = Tank.IncomingTable
 
 -- Spells miss an enemy 0-3 levels up 4 / 5 / 6 / 17% of the time, less your spell hit.
 local SPELL_MISS = { [0] = 4, 5, 6, 17 }
 local function SpellMiss(over)
-    local hit = GetSpellHitModifier and N(GetSpellHitModifier() or 0) or 0
+    local hit = GetSpellHitModifier and Known(GetSpellHitModifier() or 0) or 0
     return math.max(0, SPELL_MISS[over] - hit)
 end
 
@@ -635,80 +680,101 @@ end
 -- Caps: the things with a ceiling worth reaching.
 ------------------------------------------------------------------------------
 
+local function Signed(value) return string.format("%+.2f%%", value == 0 and 0 or value) end
+
+-- The weapon the rows below are about: the ranged one while the panel shows you as ranged (the
+-- switch, Tabs.lua), else the main hand.
+local function CapsSlot()
+    return ns.Ranged() and (INVSLOT_RANGED or 18) or (INVSLOT_MAINHAND or 16)
+end
+
 local caps = {
     key = "caps", title = "Caps", colorKey = "Insights",
     cells = {
         -- Weapon skill, named for the weapon ("Two-Handed Maces 41/45"), with what being short
         -- of the cap costs.
         { label = function()
-            local _, _, name = WeaponSkill(INVSLOT_MAINHAND or 16)
+            local _, _, name = WeaponSkill(CapsSlot())
             return name or "Weapon Skill"
         end, wide = true, get = function()
-            local cur, max = WeaponSkill(INVSLOT_MAINHAND or 16)
-            if not cur then return false end
-            local gap = SkillGap(0, cur)
-            local note = gap > 0 and string.format("%d short: -%s hit and crit, rises as you fight", gap, Pct(gap * 0.04)) or nil
-            return SkillText(cur, max), false, note, cur / max
-        end, tip = function(tt)
-            local cur, max, name = WeaponSkill(INVSLOT_MAINHAND or 16)
-            if not cur then return end
-            local oc, om, oname = WeaponSkill(INVSLOT_OFFHAND or 17)
-            if oc and oname ~= name then Line(tt, oname, oc .. " / " .. om) end
-            local function signed(v) return string.format("%+.2f%%", v == 0 and 0 or v) end
-            Line(tt, " ")
-            Line(tt, "|cffffffffAgainst an enemy of your level|r")
-            Line(tt, "Hit, and not dodged or parried", signed(-SkillGap(0, cur) * 0.04))
-            Line(tt, "Critical hits", signed(-SkillGap(0, cur) * 0.04))
-            Line(tt, " ")
-            Line(tt, "|cffffffffAgainst raid bosses|r")
-            Line(tt, "Hit, and not dodged or parried", signed(-SkillGap(3, cur) * 0.04))
-            Line(tt, "Critical hits", signed(-SkillGap(3, cur) * 0.04))
-            Line(tt, "Glancing blows", string.format("%.0f%% of hits, for %.0f%% less",
-                GlancingChance(3, cur), GlancingPenalty(3, cur)))
-            Line(tt, " ")
-            Line(tt, "|cff8c8c8cRises as you fight with this kind of weapon. Forever's own rules: "
+            local current, maximum = WeaponSkill(CapsSlot())
+            if not current then return false end
+            local gap = SkillGap(0, current)
+            local note = gap > 0 and string.format("%d short: -%s hit and crit, rises as you fight", gap, Percent(gap * 0.04)) or nil
+            return SkillText(current, maximum), false, note, current / maximum
+        end, tip = function(tooltip)
+            local ranged = ns.Ranged()
+            local current, _, name = WeaponSkill(CapsSlot())
+            if not current then return end
+            if not ranged then
+                local offCurrent, offMax, offName = WeaponSkill(INVSLOT_OFFHAND or 17)
+                if offCurrent and offName ~= name then Line(tooltip, offName, offCurrent .. " / " .. offMax) end
+            end
+            -- Shots can only miss; swings can also be dodged, parried and glance.
+            local hitLabel = ranged and "Hit" or "Hit, and not dodged or parried"
+            Line(tooltip, " ")
+            Line(tooltip, "|cffffffffAgainst an enemy of your level|r")
+            Line(tooltip, hitLabel, Signed(-SkillGap(0, current) * 0.04))
+            Line(tooltip, "Critical hits", Signed(-SkillGap(0, current) * 0.04))
+            Line(tooltip, " ")
+            Line(tooltip, "|cffffffffAgainst raid bosses|r")
+            Line(tooltip, hitLabel, Signed(-SkillGap(3, current) * 0.04))
+            Line(tooltip, "Critical hits", Signed(-SkillGap(3, current) * 0.04))
+            if not ranged then
+                Line(tooltip, "Glancing blows", string.format("%.0f%% of hits, for %.0f%% less",
+                    GlancingChance(3, current), GlancingPenalty(3, current)))
+            end
+            Line(tooltip, " ")
+            Line(tooltip, "|cff8c8c8cRises as you fight with this kind of weapon. Forever's own rules: "
                 .. "0.04% per point short of the enemy's defense (its level x 5).|r")
         end },
         -- Defense skill, out of your level x 5. Short of that, enemies of your level hit and crit
         -- you a little more; above it (gear), Forever adds 0.04% avoidance per point.
         { label = DEFENSE or "Defense", wide = true, get = function()
-            local cur, max = DefenseSkill()
-            if not cur then return false end
+            local current, maximum = DefenseSkill()
+            if not current then return false end
             local note
-            if cur < max then
-                note = string.format("%d short: enemies hit and crit you %s more", max - cur, Pct((max - cur) * 0.04))
-            elseif cur > max then
-                note = string.format("+%s avoidance, %s fewer crits taken", Pct((cur - max) * 0.04), Pct((cur - max) * 0.04))
+            if current < maximum then
+                note = string.format("%d short: enemies hit and crit you %s more", maximum - current,
+                    Percent((maximum - current) * 0.04))
+            elseif current > maximum then
+                note = string.format("+%s avoidance, %s fewer crits taken", Percent((current - maximum) * 0.04),
+                    Percent((current - maximum) * 0.04))
             end
-            return SkillText(cur, max), false, note, math.min(1, cur / max)
-        end, tip = function(tt)
-            local cur = DefenseSkill()
-            Line(tt, "By enemy level:")
+            return SkillText(current, maximum), false, note, math.min(1, current / maximum)
+        end, tip = function(tooltip)
+            local current = DefenseSkill()
+            Line(tooltip, "By enemy level:")
             local level = UnitLevel("player")
             for over = 0, 3 do
-                local crush = EnemyCrushChance(over, cur)
-                Line(tt, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
-                    string.format("misses %.1f%%  crits %.1f%%%s", EnemyMissChance(over, cur),
-                        EnemyCritChance(over, cur), crush > 0 and string.format("  crushes %.0f%%", crush) or ""))
+                local crush = EnemyCrushChance(over, current)
+                Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
+                    string.format("misses %.1f%%  crits %.1f%%%s", EnemyMissChance(over, current),
+                        EnemyCritChance(over, current), crush > 0 and string.format("  crushes %.0f%%", crush) or ""))
             end
-            Line(tt, " ")
-            Line(tt, "|cff8c8c8cCritical hits from creatures deal double damage; crushing blows deal 150%. "
+            Line(tooltip, " ")
+            Line(tooltip, "|cff8c8c8cCritical hits from creatures deal double damage; crushing blows deal 150%. "
                 .. "Rises as you take hits.|r")
         end },
-        -- Melee hit against the hit that means never missing a same-level enemy.
+        -- Hit against the hit that means never missing a same-level enemy (shots' as ranged).
         { label = "Hit Chance", wide = true, get = function()
-            local hit, need = MeleeHit(), HitNeeded(0)
-            return string.format("%s of %s", Pct(hit), Pct(need)), false,
-                string.format("%s means melee never misses a level %d enemy", Pct(need), UnitLevel("player")),
+            local ranged = ns.Ranged()
+            local hit = ranged and RangedHit() or MeleeHit()
+            local need = (ranged and ShotHitNeeded or HitNeeded)(0)
+            return string.format("%s of %s", Percent(hit), Percent(need)), false,
+                string.format("%s means %s a level %d enemy", Percent(need),
+                    ranged and "shots never miss" or "melee never misses", UnitLevel("player")),
                 math.min(1, hit / need)
-        end, tip = function(tt)
-            Line(tt, "Hit needed to never miss with melee:")
+        end, tip = function(tooltip)
+            local ranged = ns.Ranged()
+            local Need = ranged and ShotHitNeeded or HitNeeded
+            Line(tooltip, ranged and "Hit needed for shots to never miss:" or "Hit needed to never miss with melee:")
             local level = UnitLevel("player")
             for over = 0, 3 do
-                Line(tt, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""), Pct(HitNeeded(over)))
+                Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""), Percent(Need(over)))
             end
-            Line(tt, " ")
-            Line(tt, "|cff8c8c8cIncludes your weapon skill. Forever's own hit tooltip rounds the raid boss figure to 8%.|r")
+            Line(tooltip, " ")
+            Line(tooltip, "|cff8c8c8cIncludes your weapon skill. Forever's own hit tooltip rounds the raid boss figure to 8%.|r")
         end },
     },
 }
@@ -717,13 +783,14 @@ local caps = {
 -- For Tabs.lua, Tracker.lua and Compare.lua.
 ------------------------------------------------------------------------------
 
-ns.R = {
-    N = N, Num = Num, Pct = Pct, Dec = Dec, Tinted = Tinted, Line = Line, Class = Class,
-    UsesMana = UsesMana, DisplayPower = DisplayPower, Durability = Durability,
+ns.Stats = {
+    Known = Known, Number = Number, Percent = Percent, OneDecimal = OneDecimal, Tinted = Tinted, Line = Line,
+    Class = Class, UsesMana = UsesMana, DisplayPower = DisplayPower, Durability = Durability,
     GearTotals = GearTotals, GearSummary = GearSummary, GEAR_STATS = GEAR_STATS,
     StatAP = StatAP, Call = Call, BestSchool = BestSchool, ArmorReduction = ArmorReduction,
     ArmorNow = ArmorNow, WeaponSkill = WeaponSkill, DefenseSkill = DefenseSkill,
     MeleeAP = MeleeAP, MeleeHit = MeleeHit, PaperDPS = PaperDPS, SwingTable = SwingTable,
+    HasRangedWeapon = HasRangedWeapon, StatRAP = StatRAP, RangedPaperDPS = RangedPaperDPS, ShotTable = ShotTable,
     IncomingTable = IncomingTable, SpellMiss = SpellMiss, HitNeeded = HitNeeded,
     AP_PER_DPS = AP_PER_DPS, SKILL_PER_LEVEL = SKILL_PER_LEVEL,
 }
@@ -733,7 +800,7 @@ ns.R = {
 ns.GOOD, ns.BAD = { 0.45, 0.80, 0.47 }, { 0.87, 0.42, 0.38 }
 ns.GOOD_HEX, ns.BAD_HEX = "|cff73cc78", "|cffde6b61"
 
-ns.S = {
+ns.SectionByKey = {
     attributes = attributes, caps = caps, melee = melee, ranged = ranged, spell = spell,
     defense = defense, general = general,
 }

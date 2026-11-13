@@ -1,101 +1,105 @@
 local _, ns = ...
 
--- The tabs and what's on each: blocks the panel lays out top to bottom.
---   { kind = "tiles", tiles = { ... } }   big numbers in a row; each tile's get() returns the
---                                          number, false, and a small line under it
---   { kind = "section", section = ... }   a header and a grid of cells (Stats.lua)
---   { kind = "bars", ... }                 stacked bars with a legend (where swings go)
---   { kind = "worth" }                     what +10 of each stat gets you, melee or caster
---   { kind = "chips", ... }                 short labelled values that wrap
---   { kind = "changes", ... }               what changed since you logged in, one card each
---   { kind = "entries", ... }               icon rows with a number on the right (casts per spell)
---   { kind = "role" }                       the Melee / Caster switch
--- A tab's blocks can also be a function, for tabs that change with the switch.
--- Everything reads through ns.R (Stats.lua), so secret values in combat keep the last reading.
+-- The tabs and what's on each: blocks the panel lays out top to bottom (tiles, a section of cells,
+-- stacked bars, "what +10 gets you", chips, change cards, icon entries, the Melee / Ranged / Caster
+-- switch). A tab's blocks can be a function, for tabs that change with the switch. Everything reads
+-- through ns.Stats (Stats.lua), so secret values in combat keep the last reading.
 
-local R, S = ns.R, ns.S
-local N, Num, Pct, Dec, Line = R.N, R.Num, R.Pct, R.Dec, R.Line
+local Stats, Section = ns.Stats, ns.SectionByKey
+local Known, Number, Percent, OneDecimal, Line = Stats.Known, Stats.Number, Stats.Percent, Stats.OneDecimal, Stats.Line
 
 local CASTERS = { MAGE = true, PRIEST = true, WARLOCK = true }
 
 local function EHP()
-    local hp, r = N(UnitHealthMax("player")), R.ArmorReduction(R.ArmorNow())
-    return hp / (1 - r), hp, r
+    local health, reduction = Known(UnitHealthMax("player")), Stats.ArmorReduction(Stats.ArmorNow())
+    return health / (1 - reduction), health, reduction
 end
 
 local function ManaRate()
     local measured = ns.Regen and ns.Regen:Rate("rest")
     if measured then return measured, true end
-    return N((GetManaRegen())), false
+    return Known((GetManaRegen())), false
 end
 
-local function Seconds(secs)
-    if secs >= 120 then return string.format("%.1f min", secs / 60) end
-    return string.format("%ds", secs + 0.5)
+local function Seconds(seconds)
+    if seconds >= 120 then return string.format("%.1f min", seconds / 60) end
+    return string.format("%ds", seconds + 0.5)
 end
 
 ------------------------------------------------------------------------------
 -- Tiles
 ------------------------------------------------------------------------------
 
--- Showing things as a caster: the Melee / Caster switch, for anyone with mana.
-local function Caster() return ns.WorthRole() == "caster" and R.UsesMana() end
+-- Showing things as a caster: the switch's Caster, for anyone with mana.
+local function Caster() return ns.WorthRole() == "caster" and Stats.UsesMana() end
+
+-- As ranged: the switch's Ranged (hunters), with something to shoot. Stats.lua's Caps rows ask too.
+function ns.Ranged() return ns.WorthRole() == "ranged" and Stats.HasRangedWeapon() end
+local Ranged = ns.Ranged
 
 local damageTile = {
     caption = function() return Caster() and "SPELL POWER" or "REAL DPS" end, colorKey = "Attack",
     get = function()
         if Caster() then
-            return "+" .. Num((R.BestSchool(GetSpellBonusDamage))), false,
-                Pct((R.BestSchool(GetSpellCritChance))) .. " crit"
+            return "+" .. Number((Stats.BestSchool(GetSpellBonusDamage))), false,
+                Percent((Stats.BestSchool(GetSpellCritChance))) .. " crit"
         end
-        local paper = R.PaperDPS()
-        return string.format("%.1f", paper * R.SwingTable(0).mult), false, string.format("%.1f on paper", paper)
+        local paper, share
+        if Ranged() then
+            paper, share = Stats.RangedPaperDPS(), Stats.ShotTable(0).mult
+        else
+            paper, share = Stats.PaperDPS(), Stats.SwingTable(0).mult
+        end
+        return string.format("%.1f", paper * share), false, string.format("%.1f on paper", paper)
     end,
-    tip = function(tt)
+    tip = function(tooltip)
         if Caster() then
-            Line(tt, "Bonus damage and healing on your spells. Switch to Melee to see your real DPS.")
-            return
+            Line(tooltip, "Bonus damage and healing on your spells. Switch to Melee to see your real DPS.")
+        elseif Ranged() then
+            Line(tooltip, "What your ranged auto-attacks really do to an enemy of your level, after misses "
+                .. "and crits. The Offense tab shows the split.")
+        else
+            Line(tooltip, "What your auto-attacks really do to an enemy of your level, after misses, dodges, "
+                .. "glancing blows and crits. The Offense tab shows the split.")
         end
-        Line(tt, "What your auto-attacks really do to an enemy of your level, after misses, dodges, "
-            .. "glancing blows and crits. The Offense tab shows the split.")
     end,
 }
 
 local ehpTile = {
     caption = "EFFECTIVE HP", colorKey = "Defense",
     get = function()
-        local ehp, hp, r = EHP()
-        return Num(math.floor(ehp + 0.5)), false, string.format("%s HP, armor %.0f%%", Num(hp), r * 100)
+        local ehp, health, reduction = EHP()
+        return Number(math.floor(ehp + 0.5)), false, string.format("%s HP, armor %.0f%%", Number(health), reduction * 100)
     end,
-    tip = function(tt)
-        Line(tt, "The physical damage it takes to bring you down from full health, once armor has "
+    tip = function(tooltip)
+        Line(tooltip, "The physical damage it takes to bring you down from full health, once armor has "
             .. "taken its share, against an enemy of your level.")
     end,
 }
 
 local powerTile = {
     caption = function()
-        if R.UsesMana() then return "MANA" end
-        return string.upper(select(2, R.DisplayPower()))
+        if Stats.UsesMana() then return "MANA" end
+        return string.upper(select(2, Stats.DisplayPower()))
     end, colorKey = "Secondary Stats",
     get = function()
-        if R.UsesMana() then
-            local max = N(UnitPowerMax("player", 0))
+        if Stats.UsesMana() then
+            local maxMana = Known(UnitPowerMax("player", 0))
             local rate = ManaRate()
-            return Num(max), false, rate > 0 and ("full in " .. Seconds(max / rate)) or "no regen"
+            return Number(maxMana), false, rate > 0 and ("full in " .. Seconds(maxMana / rate)) or "no regen"
         end
-        local pType = R.DisplayPower()
-        local sub
+        local powerType = Stats.DisplayPower()
+        local note
         if GetPowerRegen then
-            local regen = N((GetPowerRegen()))
-            if regen > 0 then sub = Dec(regen) .. " per second" end
+            local regen = Known((GetPowerRegen()))
+            if regen > 0 then note = OneDecimal(regen) .. " per second" end
         end
-        return Num(UnitPowerMax("player", pType)), false, sub
+        return Number(UnitPowerMax("player", powerType)), false, note
     end,
-    tip = function(tt)
-        if not R.UsesMana() then return end
+    tip = function(tooltip)
+        if not Stats.UsesMana() then return end
         local _, measured = ManaRate()
-        Line(tt, "Time to fill your mana from empty while not casting (without drinking)"
+        Line(tooltip, "Time to fill your mana from empty while not casting (without drinking)"
             .. (measured and ", from your measured regen." or "."))
     end,
 }
@@ -106,118 +110,167 @@ local powerTile = {
 
 -- What it takes to know: base values once, then each stat's gain worked out with the client's
 -- own conversion functions where it has them.
-local function StatValue(i)
-    local _, stat = UnitStat("player", i)
-    return N(stat)
+local function StatValue(statIndex)
+    local _, stat = UnitStat("player", statIndex)
+    return Known(stat)
 end
 
-local function Fraction(fn, i, stat)
-    local v = R.Call(fn, i, stat)
-    return v and v * 100 or 0
+local function Fraction(Convert, statIndex, stat)
+    local share = Stats.Call(Convert, statIndex, stat)
+    return share and share * 100 or 0
+end
+
+local function StaminaRow()
+    local _, health = EHP()
+    local perPoint = Stats.Call(UnitHPPerStamina, "player") or 10
+    return { stat = "+10 Stamina", headline = string.format("+%d HP", perPoint * 10), colorKey = "Defense",
+        gain = perPoint * 10 / health, detail = string.format("%d%% more effective health", perPoint * 10 / health * 100 + 0.5) }
 end
 
 local function MeleeWorth()
     local rows = {}
-    local paper = R.PaperDPS()
-    local sw = R.SwingTable(0)
-    local real = paper * sw.mult
+    local paper = Stats.PaperDPS()
+    local swings = Stats.SwingTable(0)
+    local real = paper * swings.mult
     local _, offSpeed = UnitAttackSpeed("player")
     local hands = offSpeed and 1.5 or 1 -- an off hand gets half the attack power bonus
-    local function dpsFromAP(ap) return ap / R.AP_PER_DPS * hands * sw.mult end
+    local function DPSFromAP(attackPower) return attackPower / Stats.AP_PER_DPS * hands * swings.mult end
 
-    local str = StatValue(1)
-    local strAP = (R.StatAP(1, str + 10) or 0) - (R.StatAP(1, str) or 0)
-    local strDPS = dpsFromAP(strAP)
-    rows[#rows + 1] = { stat = "+10 Strength", headline = string.format("+%.1f DPS", strDPS), colorKey = "Attack",
-        gain = strDPS / real, detail = string.format("+%d attack power · %d%% more damage", strAP, strDPS / real * 100 + 0.5) }
+    local strength = StatValue(1)
+    local strengthAP = (Stats.StatAP(1, strength + 10) or 0) - (Stats.StatAP(1, strength) or 0)
+    local strengthDPS = DPSFromAP(strengthAP)
+    rows[#rows + 1] = { stat = "+10 Strength", headline = string.format("+%.1f DPS", strengthDPS), colorKey = "Attack",
+        gain = strengthDPS / real,
+        detail = string.format("+%d attack power · %d%% more damage", strengthAP, strengthDPS / real * 100 + 0.5) }
 
-    local _, hp = EHP()
-    local per = R.Call(UnitHPPerStamina, "player") or 10
-    rows[#rows + 1] = { stat = "+10 Stamina", headline = string.format("+%d HP", per * 10), colorKey = "Defense",
-        gain = per * 10 / hp, detail = string.format("%d%% more effective health", per * 10 / hp * 100 + 0.5) }
+    rows[#rows + 1] = StaminaRow()
 
-    local agi = StatValue(2)
-    local crit = Fraction(GetCritChanceFromStat, 2, agi + 10) - Fraction(GetCritChanceFromStat, 2, agi)
-    local agiAP = (R.StatAP(2, agi + 10) or 0) - (R.StatAP(2, agi) or 0)
-    local agiDPS = paper * crit / 100 + dpsFromAP(agiAP)
-    local dodge = (R.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agi) * 10
-    rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agiDPS), colorKey = "Attack",
-        gain = agiDPS / real, detail = string.format("+%.1f%% crit · +%.1f%% dodge · +20 armor%s", crit, dodge,
-            agiAP > 0 and string.format(" · +%d AP", agiAP) or "") }
+    local agility = StatValue(2)
+    local crit = Fraction(GetCritChanceFromStat, 2, agility + 10) - Fraction(GetCritChanceFromStat, 2, agility)
+    local agilityAP = (Stats.StatAP(2, agility + 10) or 0) - (Stats.StatAP(2, agility) or 0)
+    local agilityDPS = paper * crit / 100 + DPSFromAP(agilityAP)
+    local dodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agility) * 10
+    rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agilityDPS), colorKey = "Attack",
+        gain = agilityDPS / real, detail = string.format("+%.1f%% crit · +%.1f%% dodge · +20 armor%s", crit, dodge,
+            agilityAP > 0 and string.format(" · +%d AP", agilityAP) or "") }
 
-    if sw.miss > 0 then
-        local hitDPS = paper * math.min(1, sw.miss) / 100
+    if swings.miss > 0 then
+        local hitDPS = paper * math.min(1, swings.miss) / 100
         rows[#rows + 1] = { stat = "+1% Hit", headline = string.format("+%.2f DPS", hitDPS), colorKey = "Attack",
             gain = hitDPS / real, detail = "1 fewer miss in every 100 swings" }
     end
     return rows
 end
 
-local function CasterWorth()
-    local rows = {}
-    local maxMana = N(UnitPowerMax("player", 0))
-    local int = StatValue(4)
-    local mana = (int + 10 <= (INTELLECT_BREAK or 20)) and 10 or 10 * (MANA_PER_INTELLECT or 15)
-    local crit = Fraction(GetSpellCritChanceFromStat, 4, int + 10) - Fraction(GetSpellCritChanceFromStat, 4, int)
-    rows[#rows + 1] = { stat = "+10 Intellect", headline = string.format("+%d mana", mana), colorKey = "Secondary Stats",
+local function IntellectRow()
+    local maxMana = Known(UnitPowerMax("player", 0))
+    local intellect = StatValue(4)
+    local mana = (intellect + 10 <= (INTELLECT_BREAK or 20)) and 10 or 10 * (MANA_PER_INTELLECT or 15)
+    local crit = Fraction(GetSpellCritChanceFromStat, 4, intellect + 10) - Fraction(GetSpellCritChanceFromStat, 4, intellect)
+    return { stat = "+10 Intellect", headline = string.format("+%d mana", mana), colorKey = "Secondary Stats",
         gain = mana / maxMana, detail = string.format("%d%% more mana", mana / maxMana * 100 + 0.5)
             .. (crit >= 0.05 and string.format(" · +%.1f%% spell crit", crit) or "") }
+end
 
-    local spi = StatValue(5)
-    local fromSpirit = R.Call(GetManaRegenFromSpirit)
-    local regen = N((GetManaRegen()))
-    if fromSpirit and spi > 0 and regen > 0 then
-        local mp5 = fromSpirit * 5 / spi * 10
-        local hp5 = (R.Call(GetHealthRegenFromSpirit) or 0) * 0.75 * 5 / spi * 10
-        rows[#rows + 1] = { stat = "+10 Spirit", headline = string.format("+%s mp5", Dec(mp5)), colorKey = "Secondary Stats",
+-- A hunter's shots: Strength gives them no ranged attack power, so it isn't here.
+local function RangedWorth()
+    local rows = {}
+    local paper = Stats.RangedPaperDPS()
+    local shots = Stats.ShotTable(0)
+    local real = paper * shots.mult
+
+    local agility = StatValue(2)
+    local crit = Fraction(GetCritChanceFromStat, 2, agility + 10) - Fraction(GetCritChanceFromStat, 2, agility)
+    local agilityAP = Stats.StatRAP(2, agility + 10) - Stats.StatRAP(2, agility)
+    local agilityDPS = paper * crit / 100 + agilityAP / Stats.AP_PER_DPS * shots.mult
+    rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agilityDPS), colorKey = "Attack",
+        gain = agilityDPS / real,
+        detail = string.format("+%d ranged attack power · +%.1f%% crit", agilityAP, crit) }
+
+    rows[#rows + 1] = StaminaRow()
+    rows[#rows + 1] = IntellectRow()
+
+    if shots.miss > 0 then
+        local hitDPS = paper * math.min(1, shots.miss) / 100
+        rows[#rows + 1] = { stat = "+1% Hit", headline = string.format("+%.2f DPS", hitDPS), colorKey = "Attack",
+            gain = hitDPS / real, detail = "1 fewer miss in every 100 shots" }
+    end
+    return rows
+end
+
+local function CasterWorth()
+    local rows = { IntellectRow() }
+
+    local spirit = StatValue(5)
+    local fromSpirit = Stats.Call(GetManaRegenFromSpirit)
+    local regen = Known((GetManaRegen()))
+    if fromSpirit and spirit > 0 and regen > 0 then
+        local mp5 = fromSpirit * 5 / spirit * 10
+        local hp5 = (Stats.Call(GetHealthRegenFromSpirit) or 0) * 0.75 * 5 / spirit * 10
+        rows[#rows + 1] = { stat = "+10 Spirit", headline = string.format("+%s mp5", OneDecimal(mp5)), colorKey = "Secondary Stats",
             gain = mp5 / (regen * 5), detail = string.format("%d%% faster mana regen · +%s health per 5s",
-                mp5 / (regen * 5) * 100 + 0.5, Dec(hp5)) }
+                mp5 / (regen * 5) * 100 + 0.5, OneDecimal(hp5)) }
     end
 
-    local _, hp = EHP()
-    local per = R.Call(UnitHPPerStamina, "player") or 10
-    rows[#rows + 1] = { stat = "+10 Stamina", headline = string.format("+%d HP", per * 10), colorKey = "Defense",
-        gain = per * 10 / hp, detail = string.format("%d%% more effective health", per * 10 / hp * 100 + 0.5) }
+    rows[#rows + 1] = StaminaRow()
 
     rows[#rows + 1] = { stat = "+10 Spell Power", headline = "+10 per spell", colorKey = "Secondary Stats",
         detail = "damage and healing, scaled by each spell's cast time" }
     return rows
 end
 
--- Auto: mages, priests and warlocks are casters; warriors, rogues and hunters melee; a druid is
--- melee in cat or bear form and a caster otherwise; a shaman or paladin is a caster once their
--- best spell school's bonus passes half their attack power. The last answer stays if it can't be
--- read (in combat).
+-- Auto: mages, priests and warlocks cast, hunters shoot, warriors and rogues melee, a druid melees in
+-- cat or bear form, and a shaman or paladin casts once their best school's bonus passes half their AP.
 local CAT_BEAR = { [1] = true, [5] = true, [8] = true }
 local lastAuto
 
 local function AutoRole()
-    local class = R.Class()
+    local class = Stats.Class()
     if CASTERS[class] then return "caster" end
+    if class == "HUNTER" then return Stats.HasRangedWeapon() and "ranged" or "melee" end
     if class == "DRUID" then
         local id = GetShapeshiftFormID and GetShapeshiftFormID()
         if id == nil and GetShapeshiftFormID then return "caster" end
-        if id ~= nil then return CAT_BEAR[N(id)] and "melee" or "caster" end
+        if id ~= nil then return CAT_BEAR[Known(id)] and "melee" or "caster" end
         return (GetShapeshiftForm() or 0) == 0 and "caster" or "melee"
     end
     if class == "SHAMAN" or class == "PALADIN" then
-        local sp = R.BestSchool(GetSpellBonusDamage)
-        return sp > R.MeleeAP() / 2 and "caster" or "melee"
+        local spellPower = Stats.BestSchool(GetSpellBonusDamage)
+        return spellPower > Stats.MeleeAP() / 2 and "caster" or "melee"
     end
     return "melee"
 end
 
--- Which list to show: Melee or Caster when picked on the switch, else Auto.
+-- The switch's choices: Ranged for hunters, Caster for anyone else with mana, none for the rest.
+local HUNTER_ROLES, CASTER_ROLES = { "auto", "melee", "ranged" }, { "auto", "melee", "caster" }
+
+function ns.Roles()
+    if Stats.Class() == "HUNTER" then return HUNTER_ROLES end
+    if Stats.UsesMana() then return CASTER_ROLES end
+end
+
+-- What's picked on the switch: one of your choices (the setting is shared by your characters),
+-- else Auto.
+function ns.RoleChoice()
+    for _, role in ipairs(ns.Roles() or {}) do
+        if role ~= "auto" and role == ns.db.role then return role end
+    end
+    return "auto"
+end
+
+-- Which list to show: the switch's pick, else Auto's (its last answer while it can't be read, in
+-- combat).
 function ns.WorthRole()
-    local role = ns.db.role
-    if role == "melee" or role == "caster" then return role end
+    local choice = ns.RoleChoice()
+    if choice ~= "auto" then return choice end
     local ok, auto = pcall(AutoRole)
     if ok and auto then lastAuto = auto end
     return lastAuto or "melee"
 end
 
 function ns.Worth()
-    if ns.WorthRole() == "caster" and R.UsesMana() then return CasterWorth() end
+    if Caster() then return CasterWorth() end
+    if Ranged() then return RangedWorth() end
     return MeleeWorth()
 end
 
@@ -226,7 +279,7 @@ end
 ------------------------------------------------------------------------------
 
 -- Segment colours, the same in both looks.
-local C = {
+local COLORS = {
     hit = { 0.42, 0.48, 0.55 }, crit = { 1, 0.78, 0.25 }, miss = { 0.9, 0.33, 0.29 },
     dodge = { 0.66, 0.70, 0.74 }, glance = { 0.62, 0.48, 0.28 },
     safe = { 0.31, 0.89, 0.42 }, yours = { 0.35, 0.70, 1 }, parry = { 0.10, 0.82, 0.63 },
@@ -234,30 +287,41 @@ local C = {
     weapon = { 0.72, 0.40, 0.18 }, ap = { 1, 0.70, 0.42 },
 }
 
-local function Seg(pct, color, name)
-    return { pct = pct, color = color, text = string.format("%s %s", name, Pct(pct)) }
+local function Segment(share, color, name)
+    return { pct = share, color = color, text = string.format("%s %s", name, Percent(share)) }
 end
 
 local function SwingRow(over, label)
-    local t = R.SwingTable(over)
-    local paper = R.PaperDPS()
-    local segs = {
-        Seg(t.hit, C.hit, "Hit"), Seg(t.glance, C.glance, "Glancing"), Seg(t.crit, C.crit, "Crit"),
-        Seg(t.miss, C.miss, "Miss"), Seg(t.dodge, C.dodge, "Dodge"),
+    local swings = Stats.SwingTable(over)
+    local paper = Stats.PaperDPS()
+    local segments = {
+        Segment(swings.hit, COLORS.hit, "Hit"), Segment(swings.glance, COLORS.glance, "Glancing"),
+        Segment(swings.crit, COLORS.crit, "Crit"), Segment(swings.miss, COLORS.miss, "Miss"),
+        Segment(swings.dodge, COLORS.dodge, "Dodge"),
     }
-    local foot = t.glance > 0 and string.format("glancing blows deal %d%% less", t.glancePenalty + 0.5) or nil
-    return { label = label, right = string.format("%.1f real DPS", paper * t.mult), segs = segs, foot = foot }
+    local foot = swings.glance > 0 and string.format("glancing blows deal %d%% less", swings.glancePenalty + 0.5) or nil
+    return { label = label, right = string.format("%.1f real DPS", paper * swings.mult), segs = segments, foot = foot }
 end
 
 local function IncomingRow(over, label)
-    local t = R.IncomingTable(over)
-    local segs = {
-        Seg(t.hit, C.hit, "Hit"), Seg(t.crush, C.crush, "Crushing"), Seg(t.crit, C.crit, "Crit"),
-        Seg(t.miss, C.safe, "Miss"), Seg(t.dodge, C.yours, "Dodge"), Seg(t.parry, C.parry, "Parry"),
-        Seg(t.block, C.block, "Block"),
+    local incoming = Stats.IncomingTable(over)
+    local segments = {
+        Segment(incoming.hit, COLORS.hit, "Hit"), Segment(incoming.crush, COLORS.crush, "Crushing"),
+        Segment(incoming.crit, COLORS.crit, "Crit"), Segment(incoming.miss, COLORS.safe, "Miss"),
+        Segment(incoming.dodge, COLORS.yours, "Dodge"), Segment(incoming.parry, COLORS.parry, "Parry"),
+        Segment(incoming.block, COLORS.block, "Block"),
     }
-    return { label = label, right = "avoid " .. Pct(t.miss + t.dodge + t.parry), segs = segs,
-        foot = t.crush > 0 and "crushing blows deal 150%" or nil }
+    return { label = label, right = "avoid " .. Percent(incoming.miss + incoming.dodge + incoming.parry), segs = segments,
+        foot = incoming.crush > 0 and "crushing blows deal 150%" or nil }
+end
+
+local function ShotRow(over, label)
+    local shots = Stats.ShotTable(over)
+    local segments = {
+        Segment(shots.hit, COLORS.hit, "Hit"), Segment(shots.crit, COLORS.crit, "Crit"),
+        Segment(shots.miss, COLORS.miss, "Miss"),
+    }
+    return { label = label, right = string.format("%.1f real DPS", Stats.RangedPaperDPS() * shots.mult), segs = segments }
 end
 
 local function BossLabel() return string.format("Raid boss (level %d)", UnitLevel("player") + 3) end
@@ -267,18 +331,18 @@ local function SameLabel() return string.format("Level %d enemy", UnitLevel("pla
 -- Extra cells for the tabs
 ------------------------------------------------------------------------------
 
-table.insert(S.spell.cells, 5, { label = "Resisted", get = function()
-    return Pct(R.SpellMiss(0)) .. " · " .. Pct(R.SpellMiss(3)) .. " boss"
-end, tip = function(tt)
-    Line(tt, "Your spells' chance to be resisted outright by an enemy:")
+table.insert(Section.spell.cells, 5, { label = "Resisted", get = function()
+    return Percent(Stats.SpellMiss(0)) .. " · " .. Percent(Stats.SpellMiss(3)) .. " boss"
+end, tip = function(tooltip)
+    Line(tooltip, "Your spells' chance to be resisted outright by an enemy:")
     local level = UnitLevel("player")
     for over = 0, 3 do
-        Line(tt, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""), Pct(R.SpellMiss(over)))
+        Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""), Percent(Stats.SpellMiss(over)))
     end
 end, wide = true })
 
-table.insert(S.defense.cells, { label = "Health Regen", wide = true, get = function()
-    local fromSpirit = R.Call(GetHealthRegenFromSpirit)
+table.insert(Section.defense.cells, { label = "Health Regen", wide = true, get = function()
+    local fromSpirit = Stats.Call(GetHealthRegenFromSpirit)
     if not fromSpirit then return false end
     local standing = fromSpirit * 0.75 * 5
     return string.format("%d per 5s", standing), false, string.format("%d sitting · out of combat", fromSpirit * 5)
@@ -286,26 +350,26 @@ end })
 
 -- The most crit your white swings can use against a boss, hitting it from behind: what's left
 -- once its misses, dodges and glancing blows have their share.
-table.insert(S.caps.cells, { label = "Crit cap (boss)", wide = true, get = function()
-    if Caster() then return false end
-    local t = R.SwingTable(3)
+table.insert(Section.caps.cells, { label = "Crit cap (boss)", wide = true, get = function()
+    if Caster() or Ranged() then return false end
+    local swings = Stats.SwingTable(3)
     -- In the sheet's own terms: the boss also takes some crit off for weapon skill short of its
     -- defense, so the sheet's crit chance can go that much higher.
-    local cap = 100 - t.miss - t.dodge - t.glance + t.critPenalty
-    local crit = N(GetCritChance())
+    local cap = 100 - swings.miss - swings.dodge - swings.glance + swings.critPenalty
+    local crit = Known(GetCritChance())
     local note = crit >= cap and "past it: more crit is wasted on white hits"
-        or string.format("%s more crit before white hits stop gaining", Pct(cap - crit))
-    return string.format("%s of %s", Pct(crit), Pct(cap)), false, note, math.min(1, crit / cap)
-end, tip = function(tt)
-    local t = R.SwingTable(3)
-    Line(tt, "A boss's misses, dodges and glancing blows come first; crits only land on what's left. "
+        or string.format("%s more crit before white hits stop gaining", Percent(cap - crit))
+    return string.format("%s of %s", Percent(crit), Percent(cap)), false, note, math.min(1, crit / cap)
+end, tip = function(tooltip)
+    local swings = Stats.SwingTable(3)
+    Line(tooltip, "A boss's misses, dodges and glancing blows come first; crits only land on what's left. "
         .. "Past that, extra crit chance does nothing for auto-attacks (special attacks still crit).")
-    Line(tt, " ")
-    Line(tt, "Miss", Pct(t.miss))
-    Line(tt, "Dodge", Pct(t.dodge))
-    Line(tt, "Glancing", Pct(t.glance))
-    if t.critPenalty > 0 then Line(tt, "Crit lost to weapon skill", Pct(t.critPenalty)) end
-    Line(tt, "|cff8c8c8cFrom behind, so parries aren't counted. In the character sheet's own crit chance.|r")
+    Line(tooltip, " ")
+    Line(tooltip, "Miss", Percent(swings.miss))
+    Line(tooltip, "Dodge", Percent(swings.dodge))
+    Line(tooltip, "Glancing", Percent(swings.glance))
+    if swings.critPenalty > 0 then Line(tooltip, "Crit lost to weapon skill", Percent(swings.critPenalty)) end
+    Line(tooltip, "|cff8c8c8cFrom behind, so parries aren't counted. In the character sheet's own crit chance.|r")
 end })
 
 local armorByLevel = {
@@ -317,8 +381,8 @@ for over = 0, 3 do
         label = function() return string.format("Level %d%s", UnitLevel("player") + over, over == 3 and " (boss)" or "") end,
         wide = true,
         get = function()
-            local r = R.ArmorReduction(R.ArmorNow(), over)
-            return string.format("%.1f%%", r * 100), false, nil, r / 0.75
+            local reduction = Stats.ArmorReduction(Stats.ArmorNow(), over)
+            return string.format("%.1f%%", reduction * 100), false, nil, reduction / 0.75
         end,
     }
 end
@@ -339,14 +403,13 @@ end
 
 -- Bear form: druids tank there (no block, no parry).
 local function InBear()
-    if R.Class() ~= "DRUID" then return false end
-    local pType = R.DisplayPower()
-    return pType == 1
+    if Stats.Class() ~= "DRUID" then return false end
+    return Stats.DisplayPower() == 1
 end
 
 -- Who these lines are for: shield users and druids in bear form, and warriors and paladins.
 local function Tanky()
-    local class = R.Class()
+    local class = Stats.Class()
     return HasShield() or InBear() or class == "WARRIOR" or class == "PALADIN"
 end
 
@@ -354,24 +417,23 @@ end
 -- seconds), paladins' Holy Shield (30% for 10 seconds). Only with a shield, once you know it.
 local function BlockAbility()
     if not HasShield() then return nil end
-    local class = R.Class()
-    local known = IsPlayerSpell or IsSpellKnown
-    local function knows(...)
+    local class = Stats.Class()
+    local IsKnown = IsPlayerSpell or IsSpellKnown
+    local function Knows(...)
         for _, id in ipairs({ ... }) do
-            if known and known(id) then return true end
+            if IsKnown and IsKnown(id) then return true end
         end
         return false
     end
-    if class == "WARRIOR" and knows(2565) then return "Shield Block", 75 end
-    if class == "PALADIN" and knows(20925, 20927, 20928) then return "Holy Shield", 30 end
+    if class == "WARRIOR" and Knows(2565) then return "Shield Block", 75 end
+    if class == "PALADIN" and Knows(20925, 20927, 20928) then return "Holy Shield", 30 end
     return nil
 end
 
 -- An enemy's swing goes down the table in order: miss, dodge, parry, block, crit, crushing blow,
--- then a plain hit with whatever's left. Crushing blows only fall off the end once everything
--- before them fills all 100%: how far short that is.
-local function CrushShort(t)
-    return t.crush + t.hit
+-- then a plain hit. Crushing blows fall off the end once everything before them fills 100%: how far short.
+local function CrushShort(incoming)
+    return incoming.crush + incoming.hit
 end
 
 local tanking = {
@@ -380,74 +442,74 @@ local tanking = {
     cells = {
         { label = "Crushing blows", wide = true, get = function()
             if not Tanky() then return false end
-            local t = R.IncomingTable(3)
+            local incoming = Stats.IncomingTable(3)
             if InBear() then
-                return Pct(t.crush), false, "bears can't block or parry, so these can't be pushed off; armor and health instead"
+                return Percent(incoming.crush), false, "bears can't block or parry, so these can't be pushed off; armor and health instead"
             end
-            local short = CrushShort(t)
+            local short = CrushShort(incoming)
             if short <= 0 then
                 return "None", false, "miss, dodge, parry and block fill the table: a boss can't crush you", 1
             end
             local name, bonus = BlockAbility()
             local note
             if name and bonus >= short then
-                note = string.format("%s short, covered while %s is up", Pct(short), name)
+                note = string.format("%s short, covered while %s is up", Percent(short), name)
             elseif name then
-                note = string.format("%s short; %s covers %s of it", Pct(short), name, Pct(bonus))
+                note = string.format("%s short; %s covers %s of it", Percent(short), name, Percent(bonus))
             else
-                note = string.format("%s more miss, dodge, parry or block pushes them off", Pct(short))
+                note = string.format("%s more miss, dodge, parry or block pushes them off", Percent(short))
             end
-            return Pct(t.crush) .. " of swings", false, note, math.max(0, 1 - short / 100)
-        end, tip = function(tt)
-            local t = R.IncomingTable(3)
-            Line(tt, "A boss three levels up swings at you down this table, in order:")
-            Line(tt, "Miss", Pct(t.miss))
-            Line(tt, "Dodge", Pct(t.dodge))
-            Line(tt, "Parry", Pct(t.parry))
-            Line(tt, "Block", Pct(t.block))
-            Line(tt, "Crit", Pct(t.crit))
-            Line(tt, "Crushing blow (150% damage)", Pct(t.crush))
-            Line(tt, "Plain hit", Pct(t.hit))
-            Line(tt, " ")
-            Line(tt, "|cff8c8c8cOnce everything above a crushing blow adds up to 100%, there's no room left "
+            return Percent(incoming.crush) .. " of swings", false, note, math.max(0, 1 - short / 100)
+        end, tip = function(tooltip)
+            local incoming = Stats.IncomingTable(3)
+            Line(tooltip, "A boss three levels up swings at you down this table, in order:")
+            Line(tooltip, "Miss", Percent(incoming.miss))
+            Line(tooltip, "Dodge", Percent(incoming.dodge))
+            Line(tooltip, "Parry", Percent(incoming.parry))
+            Line(tooltip, "Block", Percent(incoming.block))
+            Line(tooltip, "Crit", Percent(incoming.crit))
+            Line(tooltip, "Crushing blow (150% damage)", Percent(incoming.crush))
+            Line(tooltip, "Plain hit", Percent(incoming.hit))
+            Line(tooltip, " ")
+            Line(tooltip, "|cff8c8c8cOnce everything above a crushing blow adds up to 100%, there's no room left "
                 .. "for one. Defense past your cap doesn't lower the crushing chance itself, but its extra "
                 .. "miss and dodge push it off.|r")
         end },
         { label = "Crits from a boss", wide = true, get = function()
             if not Tanky() then return false end
-            local cur = R.DefenseSkill()
-            if not cur then return false end
+            local defense = Stats.DefenseSkill()
+            if not defense then return false end
             local level = UnitLevel("player")
             -- Each point of defense takes 0.04% off: 5% plus the boss's skill over your defense.
-            local need = (level + 3) * R.SKILL_PER_LEVEL + 125
-            local t = R.IncomingTable(3)
-            if cur >= need then return "None", false, "enough defense that a boss can't crit you", 1 end
-            return Pct(t.crit), false, string.format("%d defense stops them (you have %d: %d more)",
-                need, cur, need - cur), cur / need
-        end, tip = function(tt)
+            local need = (level + 3) * Stats.SKILL_PER_LEVEL + 125
+            local incoming = Stats.IncomingTable(3)
+            if defense >= need then return "None", false, "enough defense that a boss can't crit you", 1 end
+            return Percent(incoming.crit), false, string.format("%d defense stops them (you have %d: %d more)",
+                need, defense, need - defense), defense / need
+        end, tip = function(tooltip)
             local level = UnitLevel("player")
-            Line(tt, "A boss three levels up crits for double damage. Each point of defense takes 0.04% off "
+            Line(tooltip, "A boss three levels up crits for double damage. Each point of defense takes 0.04% off "
                 .. "its crit chance (5%, plus 0.04% per point of its weapon skill over your defense).")
-            Line(tt, " ")
-            Line(tt, "Defense to be crit by nothing:")
+            Line(tooltip, " ")
+            Line(tooltip, "Defense to be crit by nothing:")
             for over = 0, 3 do
-                Line(tt, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
-                    tostring((level + over) * R.SKILL_PER_LEVEL + 125))
+                Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
+                    tostring((level + over) * Stats.SKILL_PER_LEVEL + 125))
             end
-            Line(tt, "|cff8c8c8cA long way off at most levels: a goal for gear later on.|r")
+            Line(tooltip, "|cff8c8c8cA long way off at most levels: a goal for gear later on.|r")
         end },
         { label = "Block value", wide = true, get = function()
-            local chance = N(GetBlockChance())
+            local chance = Known(GetBlockChance())
             if chance <= 0 or not GetShieldBlock then return false end
-            local value = N(GetShieldBlock())
-            return Num(value), false, string.format("each block takes %s off the hit · %s of swings", Num(value), Pct(chance))
-        end, tip = function(tt)
-            Line(tt, "How much damage a blocked swing loses: your shield's block value plus what your "
+            local value = Known(GetShieldBlock())
+            return Number(value), false, string.format("each block takes %s off the hit · %s of swings", Number(value), Percent(chance))
+        end, tip = function(tooltip)
+            Line(tooltip, "How much damage a blocked swing loses: your shield's block value plus what your "
                 .. "strength adds. A block that soaks the whole hit leaves nothing.")
             local name, bonus = BlockAbility()
             if name then
-                Line(tt, " ")
-                Line(tt, string.format("%s adds %d%% to your block chance while it's up.", name, bonus))
+                Line(tooltip, " ")
+                Line(tooltip, string.format("%s adds %d%% to your block chance while it's up.", name, bonus))
             end
         end },
     },
@@ -463,7 +525,7 @@ local function RageConversion()
     return 0.0091107836 * level * level + 3.225598133 * level + 4.2652911
 end
 
-local function UsesRage() return R.DisplayPower() == 1 end
+local function UsesRage() return Stats.DisplayPower() == 1 end
 
 local rage = {
     key = "rage", title = "Rage", colorKey = "Attack",
@@ -471,29 +533,28 @@ local rage = {
     cells = {
         { label = "Per hit you land", wide = true, get = function()
             if not UsesRage() then return false end
-            local min, max = UnitDamage("player")
-            local avg = (N(min) + N(max)) / 2
-            local c = RageConversion()
-            local per = 7.5 * avg / c
-            local speed = N((UnitAttackSpeed("player")))
-            local t = R.SwingTable(0)
+            local low, high = UnitDamage("player")
+            local average = (Known(low) + Known(high)) / 2
+            local perHit = 7.5 * average / RageConversion()
+            local speed = Known((UnitAttackSpeed("player")))
+            local swings = Stats.SwingTable(0)
             -- Misses and dodges give none; crits twice the damage, glancing blows less.
-            local perMinute = per * t.mult * 60 / speed
-            return string.format("%.1f rage", per), false,
-                string.format("crits %.1f · about %d a minute from your swings", per * 2, perMinute + 0.5)
-        end, tip = function(tt)
-            Line(tt, "Rage from your main hand's white hits against an enemy of your level: 7.5 x the "
+            local perMinute = perHit * swings.mult * 60 / speed
+            return string.format("%.1f rage", perHit), false,
+                string.format("crits %.1f · about %d a minute from your swings", perHit * 2, perMinute + 0.5)
+        end, tip = function(tooltip)
+            Line(tooltip, "Rage from your main hand's white hits against an enemy of your level: 7.5 x the "
                 .. "damage, divided by your level's rage conversion. Misses and dodges give none.")
-            Line(tt, " ")
-            Line(tt, "|cff8c8c8cClassic's formula: an estimate if Forever's differs. Abilities that deal damage "
+            Line(tooltip, " ")
+            Line(tooltip, "|cff8c8c8cClassic's formula: an estimate if Forever's differs. Abilities that deal damage "
                 .. "don't make rage; white hits do.|r")
         end },
         { label = "Per 100 damage taken", wide = true, get = function()
             if not UsesRage() then return false end
-            local per = 2.5 * 100 / RageConversion()
-            return string.format("%.1f rage", per), false, "not counting what's blocked or absorbed"
-        end, tip = function(tt)
-            Line(tt, "Rage from damage you take: 2.5 x the damage, divided by your level's rage conversion. "
+            local perHundred = 2.5 * 100 / RageConversion()
+            return string.format("%.1f rage", perHundred), false, "not counting what's blocked or absorbed"
+        end, tip = function(tooltip)
+            Line(tooltip, "Rage from damage you take: 2.5 x the damage, divided by your level's rage conversion. "
                 .. "Blocked and absorbed damage doesn't count.")
         end },
     },
@@ -505,10 +566,18 @@ local rage = {
 
 local AMMO_SLOT = INVSLOT_AMMO or 0
 
-local function Minutes(ms)
-    local secs = ms / 1000
-    if secs >= 60 then return string.format("%d min", secs / 60 + 0.5) end
-    return string.format("%ds", secs + 0.5)
+local function TimeLeft(milliseconds)
+    local seconds = milliseconds / 1000
+    if seconds >= 60 then return string.format("%d min", seconds / 60 + 0.5) end
+    return string.format("%ds", seconds + 0.5)
+end
+
+-- A weapon buff's cell value: its time left (yellow under five minutes) and charges.
+local function WeaponBuff(has, milliseconds, charges)
+    if not has then return false end
+    local text = TimeLeft(Known(milliseconds))
+    if Known(milliseconds) < 300000 then text = "|cffffd040" .. text .. "|r" end
+    return text, false, (charges and Known(charges) > 0) and string.format("%d charges left", charges) or nil
 end
 
 local supplies = {
@@ -516,40 +585,34 @@ local supplies = {
     cells = {
         { label = "Ammo", wide = true, get = function()
             local count = GetInventoryItemCount("player", AMMO_SLOT)
-            count = count and N(count) or 0
-            local hunter = R.Class() == "HUNTER"
+            count = count and Known(count) or 0
+            local hunter = Stats.Class() == "HUNTER"
             if count <= 0 then
                 if hunter then return "|cffff4040None|r", false, "your ranged weapon has nothing to shoot" end
                 return false
             end
-            local speed = N((UnitRangedDamage("player")))
+            local speed = Known((UnitRangedDamage("player")))
             local note
             if speed and speed > 0 then
                 note = string.format("about %d minutes of shooting", count * speed / 60 + 0.5)
             end
-            local text = Num(count)
+            local text = Number(count)
             if hunter and count < 200 then text = "|cffffd040" .. text .. "|r" end
             return text, false, note
-        end, tip = function(tt)
-            Line(tt, "The arrows or bullets in your ammo slot, and how long they last at your ranged speed "
+        end, tip = function(tooltip)
+            Line(tooltip, "The arrows or bullets in your ammo slot, and how long they last at your ranged speed "
                 .. "if every shot is an auto shot.")
         end },
         { label = "Main hand buff", wide = true, get = function()
-            local has, ms, charges = GetWeaponEnchantInfo()
-            if not has then return false end
-            local text = Minutes(N(ms))
-            if N(ms) < 300000 then text = "|cffffd040" .. text .. "|r" end
-            return text, false, (charges and N(charges) > 0) and string.format("%d charges left", charges) or nil
-        end, tip = function(tt)
-            Line(tt, "What's on your main-hand weapon (a poison, a shaman's imbue, a sharpening stone or oil): "
+            local has, milliseconds, charges = GetWeaponEnchantInfo()
+            return WeaponBuff(has, milliseconds, charges)
+        end, tip = function(tooltip)
+            Line(tooltip, "What's on your main-hand weapon (a poison, a shaman's imbue, a sharpening stone or oil): "
                 .. "time left. Yellow under five minutes.")
         end },
         { label = "Off hand buff", wide = true, get = function()
-            local _, _, _, _, has, ms, charges = GetWeaponEnchantInfo()
-            if not has then return false end
-            local text = Minutes(N(ms))
-            if N(ms) < 300000 then text = "|cffffd040" .. text .. "|r" end
-            return text, false, (charges and N(charges) > 0) and string.format("%d charges left", charges) or nil
+            local _, _, _, _, has, milliseconds, charges = GetWeaponEnchantInfo()
+            return WeaponBuff(has, milliseconds, charges)
         end },
     },
 }
@@ -563,18 +626,18 @@ local KnowsRank, HasBuff, Threat = FrogLib.Tank.KnowsRank, FrogLib.Tank.HasBuff,
 
 local function ThreatCell()
     return { label = "Threat", wide = true, get = function()
-        local mult, parts = Threat()
+        local multiplier, parts = Threat()
         if #parts == 0 then return false end
         local names = {}
-        for _, p in ipairs(parts) do names[#names + 1] = p[1] end
-        return string.format("x%.2f", mult), false, table.concat(names, ", ")
-    end, tip = function(tt)
-        local mult, parts = Threat()
-        Line(tt, "How much threat what you do makes, against the same damage or healing with nothing changing it:")
-        for _, p in ipairs(parts) do Line(tt, p[1], string.format("x%.2f", p[2])) end
-        Line(tt, "Together", string.format("x%.2f", mult))
-        Line(tt, " ")
-        Line(tt, "|cff8c8c8cClassic's numbers: abilities with extra threat of their own (Sunder Armor, "
+        for _, part in ipairs(parts) do names[#names + 1] = part[1] end
+        return string.format("x%.2f", multiplier), false, table.concat(names, ", ")
+    end, tip = function(tooltip)
+        local multiplier, parts = Threat()
+        Line(tooltip, "How much threat what you do makes, against the same damage or healing with nothing changing it:")
+        for _, part in ipairs(parts) do Line(tooltip, part[1], string.format("x%.2f", part[2])) end
+        Line(tooltip, "Together", string.format("x%.2f", multiplier))
+        Line(tooltip, " ")
+        Line(tooltip, "|cff8c8c8cClassic's numbers: abilities with extra threat of their own (Sunder Armor, "
             .. "Revenge) are multiplied too.|r")
     end }
 end
@@ -582,12 +645,12 @@ end
 table.insert(tanking.cells, 1, ThreatCell())
 -- Everyone else sees it with the general stats when something's changing it (Salvation, rogues).
 local otherThreat = ThreatCell()
-local tankGet = otherThreat.get
+local TankGet = otherThreat.get
 otherThreat.get = function()
     if Tanky() then return false end
-    return tankGet()
+    return TankGet()
 end
-table.insert(S.general.cells, otherThreat)
+table.insert(Section.general.cells, otherThreat)
 
 ------------------------------------------------------------------------------
 -- Measured in your fights (Incoming.lua)
@@ -597,44 +660,44 @@ local measured = {
     key = "measured", title = "Measured in your fights", colorKey = "Defense",
     cells = {
         { label = "Swings at you", wide = true, get = function()
-            local s = ns.Incoming:Summary()
-            if s.n < 10 then return false end
-            return Num(s.n), false, "this session, physical only (the last 300)"
-        end, tip = function(tt)
-            Line(tt, "What really happened when enemies swung at you, from the game's own combat feedback, "
+            local summary = ns.Incoming:Summary()
+            if summary.count < 10 then return false end
+            return Number(summary.count), false, "this session, physical only (the last 300)"
+        end, tip = function(tooltip)
+            Line(tooltip, "What really happened when enemies swung at you, from the game's own combat feedback, "
                 .. "rather than worked out. Abilities that deal physical damage count too.")
         end },
         { label = "Avoided", get = function()
-            local s = ns.Incoming:Summary()
-            if s.n < 10 then return false end
-            return Pct((s.dodge + s.parry + s.miss) / s.n * 100)
-        end, tip = function(tt)
-            local s = ns.Incoming:Summary()
-            Line(tt, "Dodged", Pct(s.dodge / math.max(1, s.n) * 100))
-            Line(tt, "Parried", Pct(s.parry / math.max(1, s.n) * 100))
-            Line(tt, "Missed you", Pct(s.miss / math.max(1, s.n) * 100))
+            local summary = ns.Incoming:Summary()
+            if summary.count < 10 then return false end
+            return Percent((summary.dodge + summary.parry + summary.miss) / summary.count * 100)
+        end, tip = function(tooltip)
+            local summary = ns.Incoming:Summary()
+            Line(tooltip, "Dodged", Percent(summary.dodge / math.max(1, summary.count) * 100))
+            Line(tooltip, "Parried", Percent(summary.parry / math.max(1, summary.count) * 100))
+            Line(tooltip, "Missed you", Percent(summary.miss / math.max(1, summary.count) * 100))
         end },
         { label = "Blocked", get = function()
-            local s = ns.Incoming:Summary()
-            if s.n < 10 or s.block == 0 then return false end
-            return Pct(s.block / s.n * 100)
+            local summary = ns.Incoming:Summary()
+            if summary.count < 10 or summary.block == 0 then return false end
+            return Percent(summary.block / summary.count * 100)
         end },
         { label = "Crits taken", get = function()
-            local s = ns.Incoming:Summary()
-            if s.n < 10 then return false end
-            return Pct(s.crit / s.n * 100), s.crit == 0
+            local summary = ns.Incoming:Summary()
+            if summary.count < 10 then return false end
+            return Percent(summary.crit / summary.count * 100), summary.crit == 0
         end },
         { label = "Crushing", get = function()
-            local s = ns.Incoming:Summary()
-            if s.n < 10 then return false end
-            return Pct(s.crush / s.n * 100), s.crush == 0
+            local summary = ns.Incoming:Summary()
+            if summary.count < 10 then return false end
+            return Percent(summary.crush / summary.count * 100), summary.crush == 0
         end },
         { label = "Average hit", wide = true, get = function()
-            local s = ns.Incoming:Summary()
-            if not s.avgHit then return false end
-            return Num(math.floor(s.avgHit + 0.5)), false, string.format("largest %s", Num(s.largest))
-        end, tip = function(tt)
-            Line(tt, "The average plain hit you took (not crits, crushing blows or blocked ones), after "
+            local summary = ns.Incoming:Summary()
+            if not summary.averageHit then return false end
+            return Number(math.floor(summary.averageHit + 0.5)), false, string.format("largest %s", Number(summary.largest))
+        end, tip = function(tooltip)
+            Line(tooltip, "The average plain hit you took (not crits, crushing blows or blocked ones), after "
                 .. "your armor.")
         end },
     },
@@ -647,44 +710,45 @@ local measured = {
 local SCHOOL_COLORS = { { 2, "Fire", "ff8040" }, { 3, "Nat", "4cff4c" }, { 4, "Frost", "80d0ff" },
     { 5, "Shadow", "b080ff" }, { 6, "Arcane", "ffffff" } }
 
--- The average share of a spell resisted, at `res` resistance against a caster `level`.
-local function AvgResist(res, level)
-    return math.max(0, math.min(0.75, 0.75 * res / (5 * level)))
+-- The average share of a spell resisted, at `resistance` against a caster `level`.
+local function AverageResist(resistance, level)
+    return math.max(0, math.min(0.75, 0.75 * resistance / (5 * level)))
 end
 
-table.insert(S.defense.cells, { label = "Resisted (boss)", wide = true, get = function()
+table.insert(Section.defense.cells, { label = "Resisted (boss)", wide = true, get = function()
     local level, parts, any = UnitLevel("player") + 3, {}, false
-    for _, sc in ipairs(SCHOOL_COLORS) do
-        local _, total = UnitResistance("player", sc[1])
-        local avg = AvgResist(N(total), level)
-        if avg > 0 then any = true end
-        parts[#parts + 1] = string.format("|cff%s%s|r %d%%", sc[3], sc[2], avg * 100 + 0.5)
+    for _, school in ipairs(SCHOOL_COLORS) do
+        local _, total = UnitResistance("player", school[1])
+        local average = AverageResist(Known(total), level)
+        if average > 0 then any = true end
+        parts[#parts + 1] = string.format("|cff%s%s|r %d%%", school[3], school[2], average * 100 + 0.5)
     end
     return table.concat(parts, "  "), not any
-end, tip = function(tt)
+end, tip = function(tooltip)
     local level = UnitLevel("player")
-    Line(tt, "On average, how much of a spell you resist, school by school:")
-    for _, sc in ipairs(SCHOOL_COLORS) do
-        local _, total = UnitResistance("player", sc[1])
-        total = N(total)
-        Line(tt, string.format("|cff%s%s|r (%d)", sc[3], sc[2], total),
-            string.format("%d%% · boss %d%%", AvgResist(total, level) * 100 + 0.5, AvgResist(total, level + 3) * 100 + 0.5))
+    Line(tooltip, "On average, how much of a spell you resist, school by school:")
+    for _, school in ipairs(SCHOOL_COLORS) do
+        local _, total = UnitResistance("player", school[1])
+        total = Known(total)
+        Line(tooltip, string.format("|cff%s%s|r (%d)", school[3], school[2], total),
+            string.format("%d%% · boss %d%%", AverageResist(total, level) * 100 + 0.5,
+                AverageResist(total, level + 3) * 100 + 0.5))
     end
-    Line(tt, "|cff8c8c8c75% at most. A spell is resisted in quarters (0, 25, 50, 75 or 100%), averaging out to this.|r")
+    Line(tooltip, "|cff8c8c8c75% at most. A spell is resisted in quarters (0, 25, 50, 75 or 100%), averaging out to this.|r")
 end })
 
 ------------------------------------------------------------------------------
 -- Dual wield: the lower hit target special attacks need
 ------------------------------------------------------------------------------
 
-for _, cell in ipairs(S.caps.cells) do
+for _, cell in ipairs(Section.caps.cells) do
     if cell.label == "Hit Chance" then
-        local get = cell.get
+        local Get = cell.get
         cell.get = function()
-            local text, zero, note, bar = get()
+            local text, zero, note, bar = Get()
             local _, offSpeed = UnitAttackSpeed("player")
             if offSpeed then
-                note = string.format("white hits, dual wielding; special attacks need %s", Pct(R.HitNeeded(0) - 19))
+                note = string.format("white hits, dual wielding; special attacks need %s", Percent(Stats.HitNeeded(0) - 19))
             end
             return text, zero, note, bar
         end
@@ -705,7 +769,7 @@ local pet = {
     cells = {
         { label = function() return UnitName("pet") or "Pet" end, wide = true, get = function()
             if not HasPet() then return false end
-            return Num(UnitHealthMax("pet")) .. " HP", false, string.format("level %d", N(UnitLevel("pet")))
+            return Number(UnitHealthMax("pet")) .. " HP", false, string.format("level %d", Known(UnitLevel("pet")))
         end },
         { label = "Happiness", wide = true, get = function()
             if not HasPet() then return false end
@@ -714,50 +778,50 @@ local pet = {
             if not happiness then return false end
             return HAPPINESS[happiness] or tostring(happiness), false,
                 damage and string.format("deals %d%% damage", damage) or nil
-        end, tip = function(tt)
-            Line(tt, "A happy pet deals 125% damage, a content one 100% and an unhappy one 75%; unhappy for too "
+        end, tip = function(tooltip)
+            Line(tooltip, "A happy pet deals 125% damage, a content one 100% and an unhappy one 75%; unhappy for too "
                 .. "long, it runs away. Feeding it food it likes keeps it happy.")
             local loyalty = FrogLib.Unit.PetLoyalty()
-            if loyalty then Line(tt, " ") Line(tt, "Loyalty", loyalty) end
+            if loyalty then Line(tooltip, " ") Line(tooltip, "Loyalty", loyalty) end
             local total, used = FrogLib.Unit.PetTraining()
-            if total then Line(tt, "Training points", string.format("%d free of %d", total - used, total)) end
+            if total then Line(tooltip, "Training points", string.format("%d free of %d", total - used, total)) end
             local foods = FrogLib.Unit.PetFood()
-            if foods then Line(tt, "Eats", table.concat(foods, ", ")) end
+            if foods then Line(tooltip, "Eats", table.concat(foods, ", ")) end
         end },
         { label = "Damage", get = function()
             if not HasPet() then return false end
-            local min, max = UnitDamage("pet")
-            local speed = N((UnitAttackSpeed("pet")))
-            return string.format("%.1f DPS", (N(min) + N(max)) / 2 / speed)
-        end, tip = function(tt)
-            local min, max = UnitDamage("pet")
-            Line(tt, "Hits", string.format("%d-%d", N(min), N(max)))
-            Line(tt, "Speed", string.format("%.2fs", N((UnitAttackSpeed("pet")))))
+            local low, high = UnitDamage("pet")
+            local speed = Known((UnitAttackSpeed("pet")))
+            return string.format("%.1f DPS", (Known(low) + Known(high)) / 2 / speed)
+        end, tip = function(tooltip)
+            local low, high = UnitDamage("pet")
+            Line(tooltip, "Hits", string.format("%d-%d", Known(low), Known(high)))
+            Line(tooltip, "Speed", string.format("%.2fs", Known((UnitAttackSpeed("pet")))))
         end },
         { label = "Attack Power", get = function()
             if not HasPet() then return false end
-            local base, pos, neg = UnitAttackPower("pet")
-            return Num(N(base) + N(pos) + N(neg))
+            local base, bonus, penalty = UnitAttackPower("pet")
+            return Number(Known(base) + Known(bonus) + Known(penalty))
         end },
         { label = "Armor", get = function()
             if not HasPet() then return false end
             local _, effective = UnitArmor("pet")
-            return Num(N(effective))
+            return Number(Known(effective))
         end },
         { label = "Experience", get = function()
             if not (HasPet() and GetPetExperience) then return false end
-            local cur, max = GetPetExperience()
-            if not (cur and max and max > 0) then return false end
-            return string.format("%d%%", cur / max * 100)
+            local current, needed = GetPetExperience()
+            if not (current and needed and needed > 0) then return false end
+            return string.format("%d%%", current / needed * 100)
         end },
         { label = "Resist", wide = true, get = function()
             if not HasPet() then return false end
             local parts, any = {}, false
-            for _, sc in ipairs(SCHOOL_COLORS) do
-                local _, total = UnitResistance("pet", sc[1])
-                total = N(total)
+            for _, school in ipairs(SCHOOL_COLORS) do
+                local _, total = UnitResistance("pet", school[1])
+                total = Known(total)
                 if total ~= 0 then any = true end
-                parts[#parts + 1] = string.format("|cff%s%s|r %d", sc[3], sc[2], total)
+                parts[#parts + 1] = string.format("|cff%s%s|r %d", school[3], school[2], total)
             end
             return table.concat(parts, "  "), not any
         end },
@@ -787,11 +851,11 @@ local OWN_BUFFS = {
 
 -- Buffs are known by name, so any rank counts.
 local function HasBuffNamed(ids)
-    local byName = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
+    local ByName = C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName
     for _, id in ipairs(ids) do
         local name = C_Spell.GetSpellName(id)
-        if name and byName then
-            local aura = byName("player", name, "HELPFUL")
+        if name and ByName then
+            local aura = ByName("player", name, "HELPFUL")
             if FrogLib.issecret(aura) then error("unreadable", 0) end
             if aura then return true end
         elseif HasBuff(id) then
@@ -802,10 +866,10 @@ local function HasBuffNamed(ids)
 end
 
 local function GroupClasses()
-    local classes = { [R.Class()] = true }
-    local n = GetNumGroupMembers and GetNumGroupMembers() or 0
+    local classes = { [Stats.Class()] = true }
+    local members = GetNumGroupMembers and GetNumGroupMembers() or 0
     local prefix = IsInRaid() and "raid" or "party"
-    for i = 1, n do
+    for i = 1, members do
         local _, class = UnitClass(prefix .. i)
         if class and not FrogLib.issecret(class) then classes[class] = true end
     end
@@ -815,10 +879,12 @@ end
 local function MissingBuffs()
     local missing = {}
     for class in pairs(GroupClasses()) do
-        local b = GROUP_BUFFS[class]
-        if b and not (b[3] and not R.UsesMana()) and not HasBuffNamed(b[1]) then missing[#missing + 1] = b[2] end
+        local buff = GROUP_BUFFS[class]
+        if buff and not (buff[3] and not Stats.UsesMana()) and not HasBuffNamed(buff[1]) then
+            missing[#missing + 1] = buff[2]
+        end
     end
-    local own = OWN_BUFFS[R.Class()]
+    local own = OWN_BUFFS[Stats.Class()]
     if own and KnowsRank(own[1]) > 0 and not HasBuffNamed(own[2]) then missing[#missing + 1] = own[3] end
     table.sort(missing)
     return missing
@@ -826,11 +892,11 @@ end
 
 local function BagSpace()
     local free, total = 0, 0
-    local C = C_Container
+    local Container = C_Container
     for bag = 0, 4 do
-        local slots = C and C.GetContainerNumSlots and C.GetContainerNumSlots(bag) or 0
+        local slots = Container and Container.GetContainerNumSlots and Container.GetContainerNumSlots(bag) or 0
         total = total + slots
-        if slots > 0 then free = free + (C.GetContainerNumFreeSlots(bag) or 0) end
+        if slots > 0 then free = free + (Container.GetContainerNumFreeSlots(bag) or 0) end
     end
     return free, total
 end
@@ -843,8 +909,8 @@ local ready = {
             local missing = MissingBuffs()
             if #missing == 0 then return "None", false, "everything your group can give you" end
             return "|cffffd040" .. #missing .. "|r", false, table.concat(missing, ", ")
-        end, tip = function(tt)
-            Line(tt, "Buffs the classes in your group (you included) can give, that you haven't got, and "
+        end, tip = function(tooltip)
+            Line(tooltip, "Buffs the classes in your group (you included) can give, that you haven't got, and "
                 .. "your own class's that you know but haven't put up. Checked out of combat.")
         end },
         { label = "Bag space", wide = true, get = function()
@@ -878,13 +944,13 @@ end
 
 local function Unenchanted()
     local missing, count = {}, 0
-    for _, s in ipairs(ENCHANT_SLOTS) do
-        local id = GetInventoryItemID("player", s[1])
-        local link = id and GetInventoryItemLink("player", s[1])
-        if link and Enchantable(s[1], id) then
+    for _, slot in ipairs(ENCHANT_SLOTS) do
+        local id = GetInventoryItemID("player", slot[1])
+        local link = id and GetInventoryItemLink("player", slot[1])
+        if link and Enchantable(slot[1], id) then
             count = count + 1
             local enchant = link:match("item:%d+:(%d*)")
-            if not enchant or enchant == "" or enchant == "0" then missing[#missing + 1] = s[2] end
+            if not enchant or enchant == "" or enchant == "0" then missing[#missing + 1] = slot[2] end
         end
     end
     return missing, count
@@ -896,8 +962,8 @@ table.insert(supplies.cells, { label = "Enchants", wide = true, get = function()
     if #missing == 0 then return "All", false, "every piece that can carry one" end
     return string.format("%d of %d", count - #missing, count), false, "none on: " .. table.concat(missing, ", "),
         (count - #missing) / count
-end, tip = function(tt)
-    Line(tt, "Gear that could carry an enchant (or a scope, or an arcanum on the head and legs) but doesn't.")
+end, tip = function(tooltip)
+    Line(tooltip, "Gear that could carry an enchant (or a scope, or an arcanum on the head and legs) but doesn't.")
 end })
 
 -- Professions and secondary skills, by the game's skill line IDs.
@@ -905,18 +971,18 @@ local PROFESSIONS = { 171, 164, 333, 202, 182, 165, 186, 393, 197, 185, 129, 356
 
 local function ProfessionCell(id)
     return { label = function()
-        local ok, info = pcall(C_SkillInfo.GetSkillLineInfoByID, id)
-        return ok and type(info) == "table" and info.name or "?"
+        local ok, skill = pcall(C_SkillInfo.GetSkillLineInfoByID, id)
+        return ok and type(skill) == "table" and skill.name or "?"
     end, wide = true, get = function()
         if not (C_SkillInfo and C_SkillInfo.GetSkillLineInfoByID) then return false end
-        local ok, info = pcall(C_SkillInfo.GetSkillLineInfoByID, id)
-        if not ok or type(info) ~= "table" or type(info.rank) ~= "number" or info.rank <= 0 then return false end
-        local rank, max = info.rank + (info.modifier or 0), info.maxRank or 0
+        local ok, skill = pcall(C_SkillInfo.GetSkillLineInfoByID, id)
+        if not ok or type(skill) ~= "table" or type(skill.rank) ~= "number" or skill.rank <= 0 then return false end
+        local rank, maxRank = skill.rank + (skill.modifier or 0), skill.maxRank or 0
         local note
-        if max > 0 and max < 300 and info.rank >= max - 25 then
+        if maxRank > 0 and maxRank < 300 and skill.rank >= maxRank - 25 then
             note = "near its cap: a trainer can raise it"
         end
-        return string.format("%d / %d", rank, max), false, note, max > 0 and rank / max or nil
+        return string.format("%d / %d", rank, maxRank), false, note, maxRank > 0 and rank / maxRank or nil
     end }
 end
 
@@ -934,11 +1000,11 @@ local PET_LIST_COLORS = { "General", "Attributes", "Insights", "Defense" }
 
 -- One section per category: each stat a whole row, read for `unit` ("player" or "pet").
 local function ListSection(key, title, colorKey, entries, unit)
-    local sec = { key = key, title = title, colorKey = colorKey, cells = {} }
-    if unit ~= "player" then sec.show = function() return UnitExists(unit) and true or false end end
+    local section = { key = key, title = title, colorKey = colorKey, cells = {} }
+    if unit ~= "player" then section.show = function() return UnitExists(unit) and true or false end end
     for _, entry in ipairs(entries) do
         local last = {}
-        sec.cells[#sec.cells + 1] = {
+        section.cells[#section.cells + 1] = {
             wide = true,
             -- Read after get, which fills it in.
             label = function() return last.label end,
@@ -946,32 +1012,32 @@ local function ListSection(key, title, colorKey, entries, unit)
                 if unit ~= "player" and not UnitExists(unit) then return false end
                 local label, value, tips = FrogLib.StatList.Read(entry, unit)
                 if label == nil then return false end
-                label, value = N(label), N(value) -- hidden by the game: the last reading stays
+                label, value = Known(label), Known(value) -- hidden by the game: the last reading stays
                 last.label = (label:gsub(":%s*$", ""))
                 last.tips = tips
                 return value
             end,
             -- The game's own tooltip lines (its first is the name and value, shown already).
-            tip = function(tt)
-                for n, t in ipairs(last.tips or {}) do
-                    if n > 1 and not FrogLib.issecret(t) then Line(tt, t) end
+            tip = function(tooltip)
+                for index, tipLine in ipairs(last.tips or {}) do
+                    if index > 1 and not FrogLib.issecret(tipLine) then Line(tooltip, tipLine) end
                 end
             end,
         }
     end
-    return { kind = "section", section = sec }
+    return { kind = "section", section = section }
 end
 
 -- Yours, then your pet's (while it's out), each category its own section.
 local function ListBlocks()
     local StatList = FrogLib.StatList
     local blocks = {}
-    for i, cat in ipairs(StatList.CATEGORIES) do
-        blocks[#blocks + 1] = ListSection("list" .. i, cat[1], LIST_COLORS[i] or "General", cat[2], "player")
+    for i, category in ipairs(StatList.CATEGORIES) do
+        blocks[#blocks + 1] = ListSection("list" .. i, category[1], LIST_COLORS[i] or "General", category[2], "player")
     end
-    for i, cat in ipairs(StatList.PET_CATEGORIES or {}) do
-        blocks[#blocks + 1] = ListSection("petlist" .. i, (PET or "Pet") .. ": " .. cat[1],
-            PET_LIST_COLORS[i] or "General", cat[2], "pet")
+    for i, category in ipairs(StatList.PET_CATEGORIES or {}) do
+        blocks[#blocks + 1] = ListSection("petlist" .. i, (PET or "Pet") .. ": " .. category[1],
+            PET_LIST_COLORS[i] or "General", category[2], "pet")
     end
     return blocks
 end
@@ -982,10 +1048,11 @@ end
 
 -- Your spells against an enemy `over` levels up: resisted outright, crits (on what lands), hits.
 local function SpellRow(over, label)
-    local miss = R.SpellMiss(over)
-    local crit = N((R.BestSchool(GetSpellCritChance))) * (100 - miss) / 100
-    local segs = { Seg(100 - miss - crit, C.hit, "Hit"), Seg(crit, C.crit, "Crit"), Seg(miss, C.miss, "Resisted") }
-    return { label = label, right = "lands " .. Pct(100 - miss), segs = segs }
+    local miss = Stats.SpellMiss(over)
+    local crit = Known((Stats.BestSchool(GetSpellCritChance))) * (100 - miss) / 100
+    local segments = { Segment(100 - miss - crit, COLORS.hit, "Hit"), Segment(crit, COLORS.crit, "Crit"),
+        Segment(miss, COLORS.miss, "Resisted") }
+    return { label = label, right = "lands " .. Percent(100 - miss), segs = segments }
 end
 
 -- Every spell in your spellbook that costs mana, its highest rank only: name, icon, cost and
@@ -1001,15 +1068,16 @@ local function ManaSpells()
     for i = 1, book.GetNumSpellBookSkillLines() do
         local line = book.GetSpellBookSkillLineInfo(i)
         if line and not line.offSpecID and not line.shouldHide then
-            for j = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
-                local info = book.GetSpellBookItemInfo(j, bank)
-                if info and info.spellID and not info.isPassive and (not spellType or info.itemType == spellType) then
-                    for _, cost in ipairs(C_Spell.GetSpellPowerCost(info.spellID) or {}) do
+            for slot = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
+                local bookItem = book.GetSpellBookItemInfo(slot, bank)
+                if bookItem and bookItem.spellID and not bookItem.isPassive
+                    and (not spellType or bookItem.itemType == spellType) then
+                    for _, cost in ipairs(C_Spell.GetSpellPowerCost(bookItem.spellID) or {}) do
                         if cost.type == 0 and (cost.cost or 0) > 0 then
-                            local known = found[info.name]
+                            local known = found[bookItem.name]
                             if not known or known.cost < cost.cost then
-                                local spell = C_Spell.GetSpellInfo(info.spellID)
-                                found[info.name] = { name = info.name, icon = info.iconID, cost = cost.cost,
+                                local spell = C_Spell.GetSpellInfo(bookItem.spellID)
+                                found[bookItem.name] = { name = bookItem.name, icon = bookItem.iconID, cost = cost.cost,
                                     cast = spell and spell.castTime and spell.castTime / 1000 or 0 }
                             end
                         end
@@ -1020,34 +1088,34 @@ local function ManaSpells()
     end
     local list = {}
     for _, spell in pairs(found) do list[#list + 1] = spell end
-    table.sort(list, function(a, b) return a.cost > b.cost end)
+    table.sort(list, function(first, second) return first.cost > second.cost end)
     return list
 end
 
 local function SpellEntries()
-    local maxMana = N(UnitPowerMax("player", 0))
-    local out = {}
+    local maxMana = Known(UnitPowerMax("player", 0))
+    local entries = {}
     for _, spell in ipairs(ManaSpells()) do
         local casts = math.floor(maxMana / spell.cost)
-        out[#out + 1] = {
+        entries[#entries + 1] = {
             icon = spell.icon, title = spell.name,
             right = casts == 1 and "1 cast" or string.format("%d casts", casts),
             lines = { { text = string.format("%d mana · %s", spell.cost,
                 spell.cast > 0 and string.format("%.1fs cast", spell.cast) or "instant"), dim = true } },
         }
-        if #out == 8 then break end
+        if #entries == 8 then break end
     end
-    return out
+    return entries
 end
 
 local casterTiles = {
     damageTile,
     { caption = "SPELL CRIT", colorKey = "Secondary Stats", get = function()
-        return Pct((R.BestSchool(GetSpellCritChance))), false, "crits 50% stronger"
+        return Percent((Stats.BestSchool(GetSpellCritChance))), false, "crits 50% stronger"
     end },
     { caption = "MANA REGEN", colorKey = "Secondary Stats", get = function()
-        local rate, measured = ManaRate()
-        return Dec(rate * 5), false, measured and "mp5, measured" or "mp5 resting"
+        local rate, wasMeasured = ManaRate()
+        return OneDecimal(rate * 5), false, wasMeasured and "mp5, measured" or "mp5 resting"
     end },
 }
 
@@ -1060,32 +1128,51 @@ end
 
 local meleeTiles = {
     { caption = "PAPER DPS", colorKey = "Attack", get = function()
-        return string.format("%.1f", R.PaperDPS()), false, "on the sheet"
+        return string.format("%.1f", Stats.PaperDPS()), false, "on the sheet"
     end },
     { caption = "SWING", colorKey = "Attack", get = function()
-        local min, max = UnitDamage("player")
-        return string.format("%.2fs", N((UnitAttackSpeed("player")))), false,
-            string.format("%d-%d damage", math.floor(N(min)), math.ceil(N(max)))
-    end, tip = CellTip(S.melee, "Main Hand") },
+        local low, high = UnitDamage("player")
+        return string.format("%.2fs", Known((UnitAttackSpeed("player")))), false,
+            string.format("%d-%d damage", math.floor(Known(low)), math.ceil(Known(high)))
+    end, tip = CellTip(Section.melee, "Main Hand") },
     damageTile,
 }
 
 local dpsSource = { kind = "bars", key = "dpsSource", title = "Where your damage comes from", colorKey = "Attack", rows = function()
-    local paper = R.PaperDPS()
-    local ap = R.MeleeAP()
-    local fromAP = ap / R.AP_PER_DPS
+    local paper = Stats.PaperDPS()
+    local attackPower = Stats.MeleeAP()
+    local fromAP = attackPower / Stats.AP_PER_DPS
     local weapon = math.max(0, paper - fromAP)
     return { {
         segs = {
-            { pct = weapon / paper * 100, color = C.weapon, text = string.format("%.1f from the weapon", weapon) },
-            { pct = fromAP / paper * 100, color = C.ap, text = string.format("%.1f from %d attack power", fromAP, ap) },
+            { pct = weapon / paper * 100, color = COLORS.weapon, text = string.format("%.1f from the weapon", weapon) },
+            { pct = fromAP / paper * 100, color = COLORS.ap, text = string.format("%.1f from %d attack power", fromAP, attackPower) },
         },
         cols = 2,
     } }
 end }
 
-local swings = { kind = "bars", key = "swings", title = "Where your swings go", colorKey = "Attack", rows = function()
+local swingsGo = { kind = "bars", key = "swings", title = "Where your swings go", colorKey = "Attack", rows = function()
     return { SwingRow(0, SameLabel()), SwingRow(3, BossLabel()) }
+end }
+
+-- The ranged weapon's row (its label is Wand or Ranged), for the Shot tile that stands in for it.
+local rangedWeapon = Section.ranged.cells[1]
+
+local rangedTiles = {
+    { caption = "PAPER DPS", colorKey = "Attack", get = function()
+        return string.format("%.1f", Stats.RangedPaperDPS()), false, "on the sheet"
+    end },
+    { caption = "SHOT", colorKey = "Attack", get = function()
+        local speed, low, high = UnitRangedDamage("player")
+        return string.format("%.2fs", Known(speed)), false,
+            string.format("%d-%d damage", math.floor(Known(low)), math.ceil(Known(high)))
+    end, tip = rangedWeapon.tip },
+    damageTile,
+}
+
+local shotsGo = { kind = "bars", key = "shots", title = "Where your shots go", colorKey = "Attack", rows = function()
+    return { ShotRow(0, SameLabel()), ShotRow(3, BossLabel()) }
 end }
 
 local spellsGo = { kind = "bars", key = "spellsGo", title = "Where your spells go", colorKey = "Secondary Stats", rows = function()
@@ -1097,32 +1184,45 @@ local castsFromFull = { kind = "entries", key = "casts", title = "Casts from ful
 
 local roleSwitch = { kind = "role" }
 
--- Offense follows the Melee / Caster switch: spells first as a caster, the weapon first otherwise.
+-- Offense follows the switch: spells first as a caster, the ranged weapon first as ranged, the
+-- melee weapon first otherwise.
 local function OffenseBlocks()
     if Caster() then
         return {
             roleSwitch,
             { kind = "tiles", tiles = casterTiles },
             -- The tiles show spell power, spell crit and mana regen.
-            { kind = "section", section = S.spell, skip = { Damage = true, Crit = true, ["Mana Regen"] = true } },
+            { kind = "section", section = Section.spell, skip = { Damage = true, Crit = true, ["Mana Regen"] = true } },
             spellsGo,
             castsFromFull,
             { kind = "section", section = pet },
-            { kind = "section", section = S.melee },
+            { kind = "section", section = Section.melee },
+        }
+    end
+    if Ranged() then
+        return {
+            roleSwitch,
+            { kind = "tiles", tiles = rangedTiles },
+            -- The Shot and Paper DPS tiles show the weapon's row.
+            { kind = "section", section = Section.ranged, skip = { [rangedWeapon] = true } },
+            shotsGo,
+            { kind = "section", section = pet },
+            { kind = "section", section = Section.melee },
+            { kind = "section", section = Section.spell },
         }
     end
     local blocks = {
         { kind = "tiles", tiles = meleeTiles },
         -- The Swing and Paper DPS tiles show the main hand's line.
-        { kind = "section", section = S.melee, skip = { ["Main Hand"] = true } },
+        { kind = "section", section = Section.melee, skip = { ["Main Hand"] = true } },
         { kind = "section", section = rage },
-        { kind = "section", section = S.ranged },
+        { kind = "section", section = Section.ranged },
         { kind = "section", section = pet },
-        { kind = "section", section = S.spell },
+        { kind = "section", section = Section.spell },
         dpsSource,
-        swings,
+        swingsGo,
     }
-    if R.UsesMana() then table.insert(blocks, 1, roleSwitch) end
+    if ns.Roles() then table.insert(blocks, 1, roleSwitch) end
     return blocks
 end
 
@@ -1136,10 +1236,10 @@ ns.Tabs = {
         blocks = {
             { kind = "pinned" },
             { kind = "tiles", tiles = { damageTile, ehpTile, powerTile } },
-            { kind = "section", section = S.attributes },
+            { kind = "section", section = Section.attributes },
             { kind = "worth" },
             { kind = "section", section = ready },
-            { kind = "section", section = S.caps },
+            { kind = "section", section = Section.caps },
             { kind = "changes", key = "lastChange", title = "Last change", colorKey = "Attributes", limit = 1, hideEmpty = true },
         },
     },
@@ -1156,16 +1256,17 @@ ns.Tabs = {
                     local level, best = UnitLevel("player"), 0
                     for school = 2, 6 do
                         local _, total = UnitResistance("player", school)
-                        best = math.max(best, N(total))
+                        best = math.max(best, Known(total))
                     end
-                    local hp = N(UnitHealthMax("player"))
-                    if best == 0 then return Num(hp), false, "no resistances yet" end
-                    local avg = math.min(0.75, 0.75 * best / (level * 5))
-                    return Num(math.floor(hp / (1 - avg) + 0.5)), false, string.format("best school %d%%", avg * 100 + 0.5)
+                    local health = Known(UnitHealthMax("player"))
+                    if best == 0 then return Number(health), false, "no resistances yet" end
+                    local average = math.min(0.75, 0.75 * best / (level * 5))
+                    return Number(math.floor(health / (1 - average) + 0.5)), false,
+                        string.format("best school %d%%", average * 100 + 0.5)
                 end },
                 { caption = "AVOID", colorKey = "Defense", get = function()
-                    local t = R.IncomingTable(0)
-                    return Pct(t.miss + t.dodge + t.parry), false, "of melee swings"
+                    local incoming = Stats.IncomingTable(0)
+                    return Percent(incoming.miss + incoming.dodge + incoming.parry), false, "of melee swings"
                 end },
             } },
             { kind = "bars", key = "incoming", title = "When you're swung at", colorKey = "Defense", rows = function()
@@ -1174,7 +1275,7 @@ ns.Tabs = {
             { kind = "section", section = tanking },
             { kind = "section", section = measured },
             { kind = "section", section = armorByLevel },
-            { kind = "section", section = S.defense },
+            { kind = "section", section = Section.defense },
         },
     },
     {
@@ -1182,15 +1283,19 @@ ns.Tabs = {
         blocks = {
             { kind = "tiles", tiles = {
                 { caption = "ITEM LEVEL", colorKey = "Gear", get = function()
-                    local avg, equipped = GetAverageItemLevel()
-                    return string.format("%.1f", N(equipped or avg)), false, "equipped"
+                    local average, equipped = GetAverageItemLevel()
+                    return string.format("%.1f", Known(equipped or average)), false, "equipped"
                 end },
                 { caption = "DURABILITY", colorKey = "Gear", get = function()
-                    local avg, low = R.Durability()
-                    if not avg then return "-", false, "nothing to wear out" end
-                    local text = string.format("%d%%", avg * 100 + 0.5)
-                    if low < 0.25 then text = "|cffff4040" .. text .. "|r" elseif low < 0.5 then text = "|cffffd040" .. text .. "|r" end
-                    return text, false, low < 0.995 and string.format("most worn %d%%", low * 100 + 0.5) or "nothing worn"
+                    local average, worst = Stats.Durability()
+                    if not average then return "-", false, "nothing to wear out" end
+                    local text = string.format("%d%%", average * 100 + 0.5)
+                    if worst < 0.25 then
+                        text = "|cffff4040" .. text .. "|r"
+                    elseif worst < 0.5 then
+                        text = "|cffffd040" .. text .. "|r"
+                    end
+                    return text, false, worst < 0.995 and string.format("most worn %d%%", worst * 100 + 0.5) or "nothing worn"
                 end },
                 { caption = "WEAPON", colorKey = "Attack", get = function()
                     local link = GetInventoryItemLink("player", INVSLOT_MAINHAND or 16)
@@ -1202,12 +1307,12 @@ ns.Tabs = {
             } },
             { kind = "chips", key = "items", title = "Your items give", colorKey = "Gear",
               foot = "Enchants and buffs aren't included.", chips = function()
-                return R.GearSummary((R.GearTotals()))
+                return Stats.GearSummary((Stats.GearTotals()))
             end },
             { kind = "section", section = supplies },
             { kind = "section", section = professions },
             { kind = "changes", key = "changes", title = "Since you logged in", colorKey = "Attributes", limit = 8 },
-            { kind = "section", section = S.general },
+            { kind = "section", section = Section.general },
         },
     },
     {
@@ -1219,20 +1324,20 @@ ns.Tabs = {
 -- Every section a row can be pinned from, for finding pinned rows (Panel.lua) before their tab
 -- has been opened.
 function ns.PinSections()
-    local out, seen = {}, {}
-    local function add(sec)
-        if sec and not seen[sec] then
-            seen[sec] = true
-            out[#out + 1] = sec
+    local sections, seen = {}, {}
+    local function Add(section)
+        if section and not seen[section] then
+            seen[section] = true
+            sections[#sections + 1] = section
         end
     end
     for _, tab in ipairs(ns.Tabs) do
         if type(tab.blocks) == "table" then
             for _, block in ipairs(tab.blocks) do
-                if block.kind == "section" then add(block.section) end
+                if block.kind == "section" then Add(block.section) end
             end
         end
     end
-    for _, sec in ipairs({ S.spell, S.melee, rage, S.ranged, pet }) do add(sec) end
-    return out
+    for _, section in ipairs({ Section.spell, Section.melee, rage, Section.ranged, pet }) do Add(section) end
+    return sections
 end

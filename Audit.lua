@@ -1,93 +1,90 @@
 local _, ns = ...
 
--- /statsheet audit: writes everything the client knows about your stats into the saved
--- variables (StatSheetDB.audits[form]), to compare the panel against the game's own numbers:
---   api       every stat function's raw returns (and which ones this client has)
---   blizzard  Blizzard's own stats list: each row's data, its text and its tooltip lines
---   ours      the panel's cells and tooltip lines
---   gear      each equipped item's stats and the totals across them
---   skills    the skill lines (weapon skills, defense) when the client has them
---   found     global functions, C_ namespaces and strings that look stat-related
+-- /statsheet audit: saves what the client reports about your stats (raw API returns, the panel's
+-- cells and tooltips, gear, skills, auras, stat-like globals; with "full", Blizzard's own list and
+-- its tooltips) into StatSheetDB.audits[form], to check the panel against the game's own numbers.
 -- The game writes saved variables on /reload or logout.
 
 local Audit = {}
 ns.Audit = Audit
 
 local issecret = FrogLib.issecret
+local PLAYER = "player"
 
-local function Clean(v, depth, seen)
-    if issecret(v) then return "<secret>" end
-    local t = type(v)
-    if t == "number" then
-        if v ~= v then return "<nan>" end
-        if v == math.huge or v == -math.huge then return "<inf>" end
-        return v
+-- A copy the game can save, `depth` tables deep: secrets, NaN, functions, frames and the like as "<...>".
+local function Clean(value, depth, seen)
+    if issecret(value) then return "<secret>" end
+    local kind = type(value)
+    if kind == "number" then
+        if value ~= value then return "<nan>" end
+        if value == math.huge or value == -math.huge then return "<inf>" end
+        return value
     end
-    if t == "string" or t == "boolean" or t == "nil" then return v end
-    if t == "function" then return "<function>" end
-    if t ~= "table" then return "<" .. t .. ">" end
+    if kind == "string" or kind == "boolean" or kind == "nil" then return value end
+    if kind == "function" then return "<function>" end
+    if kind ~= "table" then return "<" .. kind .. ">" end
     if depth <= 0 then return "<table>" end
     seen = seen or {}
-    if seen[v] then return "<cycle>" end
-    seen[v] = true
-    if v.GetObjectType then
-        local ok, kind = pcall(v.GetObjectType, v)
-        local okN, name = pcall(v.GetName, v)
-        return "<" .. (ok and kind or "frame") .. " " .. tostring(okN and name or "") .. ">"
+    if seen[value] then return "<cycle>" end
+    seen[value] = true
+    if value.GetObjectType then
+        local okType, objectType = pcall(value.GetObjectType, value)
+        local okName, name = pcall(value.GetName, value)
+        return "<" .. (okType and objectType or "frame") .. " " .. tostring(okName and name or "") .. ">"
     end
-    local out = {}
-    for k, x in pairs(v) do
-        if type(k) == "string" or type(k) == "number" then out[k] = Clean(x, depth - 1, seen) end
+    local copy = {}
+    for key, item in pairs(value) do
+        if type(key) == "string" or type(key) == "number" then copy[key] = Clean(item, depth - 1, seen) end
     end
-    return out
+    return copy
 end
 
+-- "C_PaperDollInfo.GetArmorEffectiveness" to the function it names.
 local function Resolve(name)
-    local fn = _G
+    local found = _G
     for part in name:gmatch("[^%.]+") do
-        if type(fn) ~= "table" then return nil end
-        fn = fn[part]
+        if type(found) ~= "table" then return nil end
+        found = found[part]
     end
-    return fn
+    return found
 end
 
 local function Pack(...) return { n = select("#", ...), ... } end
 
 -- Every return, nils included ("<nil>"), so positions line up with the documentation.
 local function Call(name, ...)
-    local fn = Resolve(name)
-    if type(fn) ~= "function" then return "<missing>" end
-    local r = Pack(pcall(fn, ...))
-    if not r[1] then return "<error> " .. tostring(r[2]) end
-    if r.n < 2 then return "<nothing>" end
+    local func = Resolve(name)
+    if type(func) ~= "function" then return "<missing>" end
+    local returns = Pack(pcall(func, ...))
+    if not returns[1] then return "<error> " .. tostring(returns[2]) end
+    if returns.n < 2 then return "<nothing>" end
     local out = {}
-    for i = 2, r.n do
-        local v = Clean(r[i], 2)
-        if v == nil then v = "<nil>" end
-        out[i - 1] = v
+    for i = 2, returns.n do
+        local value = Clean(returns[i], 2)
+        if value == nil then value = "<nil>" end
+        out[i - 1] = value
     end
     return out
 end
 
 local function ApiDump()
     local api = {}
-    local function put(key, name, ...) api[key] = Call(name, ...) end
-    local P = "player"
-    for i = 1, 5 do put("UnitStat(" .. i .. ")", "UnitStat", P, i) end
-    for i = 0, 6 do put("UnitResistance(" .. i .. ")", "UnitResistance", P, i) end
+    local function Put(key, name, ...) api[key] = Call(name, ...) end
+    for i = 1, 5 do Put("UnitStat(" .. i .. ")", "UnitStat", PLAYER, i) end
+    for i = 0, 6 do Put("UnitResistance(" .. i .. ")", "UnitResistance", PLAYER, i) end
     for i = 1, 7 do
-        put("GetSpellBonusDamage(" .. i .. ")", "GetSpellBonusDamage", i)
-        put("GetSpellCritChance(" .. i .. ")", "GetSpellCritChance", i)
+        Put("GetSpellBonusDamage(" .. i .. ")", "GetSpellBonusDamage", i)
+        Put("GetSpellCritChance(" .. i .. ")", "GetSpellCritChance", i)
     end
     for i = 1, 32 do
-        put("GetCombatRating(" .. i .. ")", "GetCombatRating", i)
-        put("GetCombatRatingBonus(" .. i .. ")", "GetCombatRatingBonus", i)
+        Put("GetCombatRating(" .. i .. ")", "GetCombatRating", i)
+        Put("GetCombatRatingBonus(" .. i .. ")", "GetCombatRatingBonus", i)
     end
     for _, name in ipairs({ "UnitDamage", "UnitAttackSpeed", "UnitAttackPower", "UnitRangedAttackPower",
         "UnitRangedDamage", "UnitAttackBothHands", "UnitDefense", "UnitArmor", "UnitSpellHaste",
         "UnitHealthMax", "UnitPowerMax", "UnitPowerType", "UnitLevel", "UnitClass", "UnitRace",
         "UnitEffectiveLevel", "GetUnitSpeed", "UnitRangedAttack", "UnitStatPercent" }) do
-        put(name, name, P)
+        Put(name, name, PLAYER)
     end
     for _, name in ipairs({ "GetCritChance", "GetRangedCritChance", "GetSpellBonusHealing",
         "GetHitModifier", "GetSpellHitModifier", "GetMeleeHaste", "GetRangedHaste", "GetHaste",
@@ -98,37 +95,37 @@ local function ApiDump()
         "GetShapeshiftForm", "GetShapeshiftFormID", "GetVersatilityBonus", "GetModResilienceDamageReduction",
         "GetAttackPowerForStat", "GetCritChanceFromAgility", "GetSpellCritChanceFromIntellect",
         "GetUnitHealthRegenRateFromSpirit", "GetUnitManaRegenRateFromSpirit", "GetXPExhaustion" }) do
-        put(name, name)
+        Put(name, name)
     end
-    put("GetUnitHealthRegenRateFromSpirit(player)", "GetUnitHealthRegenRateFromSpirit", P)
-    put("GetUnitManaRegenRateFromSpirit(player)", "GetUnitManaRegenRateFromSpirit", P)
-    put("GetCritChanceFromAgility(player)", "GetCritChanceFromAgility", P)
-    put("GetSpellCritChanceFromIntellect(player)", "GetSpellCritChanceFromIntellect", P)
-    put("GetPowerRegenForPowerType(0)", "GetPowerRegenForPowerType", 0)
-    put("GetPowerRegenForPowerType(3)", "GetPowerRegenForPowerType", 3)
+    Put("GetUnitHealthRegenRateFromSpirit(player)", "GetUnitHealthRegenRateFromSpirit", PLAYER)
+    Put("GetUnitManaRegenRateFromSpirit(player)", "GetUnitManaRegenRateFromSpirit", PLAYER)
+    Put("GetCritChanceFromAgility(player)", "GetCritChanceFromAgility", PLAYER)
+    Put("GetSpellCritChanceFromIntellect(player)", "GetSpellCritChanceFromIntellect", PLAYER)
+    Put("GetPowerRegenForPowerType(0)", "GetPowerRegenForPowerType", 0)
+    Put("GetPowerRegenForPowerType(3)", "GetPowerRegenForPowerType", 3)
     for i = 1, 5 do
-        local _, stat = UnitStat(P, i)
-        put("GetAttackPowerForStat(" .. i .. ")", "GetAttackPowerForStat", i, stat)
+        local _, stat = UnitStat(PLAYER, i)
+        Put("GetAttackPowerForStat(" .. i .. ")", "GetAttackPowerForStat", i, stat)
     end
-    local _, armor = UnitArmor(P)
-    local level = UnitLevel(P)
-    put("GetArmorEffectiveness(lv)", "C_PaperDollInfo.GetArmorEffectiveness", armor, level)
-    put("GetArmorEffectiveness(lv+3)", "C_PaperDollInfo.GetArmorEffectiveness", armor, level + 3)
-    put("GetArmorEffectivenessAgainstTarget", "C_PaperDollInfo.GetArmorEffectivenessAgainstTarget", armor)
-    put("GetStaggerPercentage", "C_PaperDollInfo.GetStaggerPercentage", P)
-    put("GetMinItemLevel", "C_PaperDollInfo.GetMinItemLevel")
+    local _, armor = UnitArmor(PLAYER)
+    local level = UnitLevel(PLAYER)
+    Put("GetArmorEffectiveness(lv)", "C_PaperDollInfo.GetArmorEffectiveness", armor, level)
+    Put("GetArmorEffectiveness(lv+3)", "C_PaperDollInfo.GetArmorEffectiveness", armor, level + 3)
+    Put("GetArmorEffectivenessAgainstTarget", "C_PaperDollInfo.GetArmorEffectivenessAgainstTarget", armor)
+    Put("GetStaggerPercentage", "C_PaperDollInfo.GetStaggerPercentage", PLAYER)
+    Put("GetMinItemLevel", "C_PaperDollInfo.GetMinItemLevel")
     return api
 end
 
 local function GearDump()
     local items, totals = {}, {}
     for slot = 1, 19 do
-        local link = GetInventoryItemLink("player", slot)
+        local link = GetInventoryItemLink(PLAYER, slot)
         if link then
             local stats = C_Item.GetItemStats(link) or {}
             items[slot] = { link = link, stats = Clean(stats, 1) }
-            for k, v in pairs(stats) do
-                if type(v) == "number" then totals[k] = (totals[k] or 0) + v end
+            for stat, amount in pairs(stats) do
+                if type(amount) == "number" then totals[stat] = (totals[stat] or 0) + amount end
             end
         end
     end
@@ -137,130 +134,129 @@ end
 
 local function SkillDump()
     if not (GetNumSkillLines and GetSkillLineInfo) then return "<missing>" end
-    local out = {}
-    for i = 1, GetNumSkillLines() do out[i] = Clean({ GetSkillLineInfo(i) }, 1) end
-    return out
+    local skills = {}
+    for i = 1, GetNumSkillLines() do skills[i] = Clean({ GetSkillLineInfo(i) }, 1) end
+    return skills
 end
 
 local function AuraDump()
-    local out = {}
-    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then return out end
+    local auras = {}
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then return auras end
     for i = 1, 40 do
-        local ok, a = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
-        if not ok or not a then break end
-        out[i] = Clean({ name = a.name, spellId = a.spellId, points = a.points }, 2)
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, PLAYER, i, "HELPFUL")
+        if not ok or not aura then break end
+        auras[i] = Clean({ name = aura.name, spellId = aura.spellId, points = aura.points }, 2)
     end
-    return out
+    return auras
 end
 
 local WORDS = { "STAT", "PAPERDOLL", "ARMOR", "DEFENSE", "DODGE", "PARRY", "BLOCK", "CRIT", "HIT_",
     "HASTE", "REGEN", "ATTACK_POWER", "SPELL_BONUS", "SPELLPOWER", "SPELL_POWER", "RESIST", "WEAPON_SKILL",
     "MELEE", "RANGED", "EXPERTISE", "SPIRIT", "STAMINA", "INTELLECT", "AGILITY", "STRENGTH", "MANA_",
     "DAMAGE_PER_SECOND", "ATTACK_SPEED", "PENETRATION", "COMBAT_RATING", "CR_" }
-local FN_WORDS = { "Chance", "Rating", "Regen", "Haste", "Skill", "Stat", "Defense", "Armor", "Resist",
+local FUNCTION_WORDS = { "Chance", "Rating", "Regen", "Haste", "Skill", "Stat", "Defense", "Armor", "Resist",
     "Crit", "Hit", "Expertise", "Penetration", "Block", "Dodge", "Parry", "SpellBonus", "AttackPower",
     "Damage", "AttackSpeed", "PaperDoll", "Mastery", "Versatility", "Avoidance", "Lifesteal" }
 
-local function Matches(key, words)
-    for _, w in ipairs(words) do
-        if key:find(w, 1, true) then return true end
+local function Matches(name, words)
+    for _, word in ipairs(words) do
+        if name:find(word, 1, true) then return true end
     end
 end
 
 local function FoundDump()
-    local fns, strings, tables, namespaces = {}, {}, {}, {}
-    for k, v in pairs(_G) do
-        if type(k) == "string" then
-            local t = type(v)
-            if t == "function" and Matches(k, FN_WORDS) then
-                fns[#fns + 1] = k
-            elseif t == "string" and #v < 500 and Matches(k, WORDS) then
-                strings[k] = v
-            elseif t == "table" and k:match("^C_") then
+    local functions, strings, tables, namespaces = {}, {}, {}, {}
+    for name, value in pairs(_G) do
+        if type(name) == "string" then
+            local kind = type(value)
+            if kind == "function" and Matches(name, FUNCTION_WORDS) then
+                functions[#functions + 1] = name
+            elseif kind == "string" and #value < 500 and Matches(name, WORDS) then
+                strings[name] = value
+            elseif kind == "table" and name:match("^C_") then
                 local list = {}
-                for name, f in pairs(v) do
-                    if type(f) == "function" and type(name) == "string" and Matches(name, FN_WORDS) then
-                        list[#list + 1] = name
+                for member, func in pairs(value) do
+                    if type(func) == "function" and type(member) == "string" and Matches(member, FUNCTION_WORDS) then
+                        list[#list + 1] = member
                     end
                 end
                 if #list > 0 then
                     table.sort(list)
-                    namespaces[k] = list
+                    namespaces[name] = list
                 end
-            elseif t == "table" and (k:find("PAPERDOLL", 1, true) or k:find("STAT_CATEG", 1, true)) then
-                tables[k] = Clean(v, 4)
+            elseif kind == "table" and (name:find("PAPERDOLL", 1, true) or name:find("STAT_CATEG", 1, true)) then
+                tables[name] = Clean(value, 4)
             end
         end
     end
-    table.sort(fns)
-    return { functions = fns, strings = strings, tables = tables, namespaces = namespaces }
+    table.sort(functions)
+    return { functions = functions, strings = strings, tables = tables, namespaces = namespaces }
 end
 
 -- A stand-in for GameTooltip that keeps the lines, for the panel's own tooltips.
 local function Collector()
-    local c = { lines = {} }
-    function c:AddLine(text) self.lines[#self.lines + 1] = Clean(text, 0) end
-    function c:AddDoubleLine(l, r) self.lines[#self.lines + 1] = Clean(l, 0) .. "  =  " .. Clean(r, 0) end
-    return c
+    local collector = { lines = {} }
+    function collector:AddLine(text) self.lines[#self.lines + 1] = Clean(text, 0) end
+    function collector:AddDoubleLine(left, right) self.lines[#self.lines + 1] = Clean(left, 0) .. "  =  " .. Clean(right, 0) end
+    return collector
 end
 
 local function OursDump()
-    local out = {}
-    for _, sec in ipairs(ns.Sections) do
-        for _, cell in ipairs(sec.cells) do
+    local rows = {}
+    for _, section in ipairs(ns.Sections) do
+        for _, cell in ipairs(section.cells) do
             local label = type(cell.label) == "function" and select(2, pcall(cell.label)) or cell.label
             local ok, text, zero = pcall(cell.get)
-            local row = { section = sec.key, label = Clean(label, 0), text = ok and Clean(text, 0) or ("<error> " .. tostring(text)), zero = zero }
+            local row = { section = section.key, label = Clean(label, 0), text = ok and Clean(text, 0) or ("<error> " .. tostring(text)), zero = zero }
             if cell.tip then
-                local c = Collector()
-                local okT, err = pcall(cell.tip, c)
-                row.tip = okT and c.lines or ("<error> " .. tostring(err))
+                local collector = Collector()
+                local okTip, err = pcall(cell.tip, collector)
+                row.tip = okTip and collector.lines or ("<error> " .. tostring(err))
             end
-            out[#out + 1] = row
+            rows[#rows + 1] = row
         end
     end
-    return out
+    return rows
 end
 
 local function TooltipLines()
     local lines = {}
     for i = 1, GameTooltip:NumLines() do
-        local l = _G["GameTooltipTextLeft" .. i]
-        local r = _G["GameTooltipTextRight" .. i]
-        local lt = l and l:GetText()
-        local rt = r and r:IsShown() and r:GetText()
-        lt, rt = Clean(lt, 0), Clean(rt, 0)
-        lines[#lines + 1] = rt and rt ~= "" and (tostring(lt) .. "  =  " .. tostring(rt)) or lt
+        local left = _G["GameTooltipTextLeft" .. i]
+        local right = _G["GameTooltipTextRight" .. i]
+        local leftText = Clean(left and left:GetText(), 0)
+        local rightText = Clean(right and right:IsShown() and right:GetText(), 0)
+        lines[#lines + 1] = rightText and rightText ~= "" and (tostring(leftText) .. "  =  " .. tostring(rightText)) or leftText
     end
     return lines
 end
 
 -- Steps through Blizzard's list one row at a time: scrolls the row into view, runs its own
 -- OnEnter and copies the tooltip it builds.
-local function BlizzardDump(done)
+local function BlizzardDump(Done)
     local box = _G.CharacterStatsPaneScrollBox
-    local sb = box and box.ScrollBox
-    if not (sb and sb.GetDataProvider and sb:GetDataProvider()) then
-        done("<no stats list>")
+    local scrollBox = box and box.ScrollBox
+    if not (scrollBox and scrollBox.GetDataProvider and scrollBox:GetDataProvider()) then
+        Done("<no stats list>")
         return
     end
     local rows = {}
     local list = {}
-    sb:GetDataProvider():ForEach(function(data) list[#list + 1] = data end)
-    local i = 0
-    local function step()
-        i = i + 1
-        local data = list[i]
+    scrollBox:GetDataProvider():ForEach(function(data) list[#list + 1] = data end)
+    local index = 0
+    local function Step()
+        index = index + 1
+        local data = list[index]
         if not data then
             GameTooltip:Hide()
-            done(rows)
+            Done(rows)
             return
         end
         local row = { data = Clean(data, 3) }
-        rows[i] = row
-        pcall(sb.ScrollToElementData, sb, data)
+        rows[index] = row
+        pcall(scrollBox.ScrollToElementData, scrollBox, data)
         C_Timer.After(0.05, function()
-            local frame = sb.FindFrame and sb:FindFrame(data)
+            local frame = scrollBox.FindFrame and scrollBox:FindFrame(data)
             if frame then
                 row.label = frame.Label and Clean(frame.Label:GetText(), 0)
                 row.value = frame.Value and Clean(frame.Value:GetText(), 0)
@@ -277,37 +273,37 @@ local function BlizzardDump(done)
             else
                 row.frame = "<not found>"
             end
-            step()
+            Step()
         end)
     end
-    step()
+    Step()
 end
 
 -- The whole audit as one JSON string: a string always saves, where a table holding something
 -- the game can't write (a NaN, say) can be dropped from the file without a word.
-local function Json(v, out)
-    local t = type(v)
-    if t == "table" then
+local function Json(value, out)
+    local kind = type(value)
+    if kind == "table" then
         out[#out + 1] = "{"
         local first = true
-        for k, x in pairs(v) do
+        for key, item in pairs(value) do
             if not first then out[#out + 1] = "," end
             first = false
-            Json(tostring(k), out)
+            Json(tostring(key), out)
             out[#out + 1] = ":"
-            Json(x, out)
+            Json(item, out)
         end
         out[#out + 1] = "}"
-    elseif t == "string" then
-        out[#out + 1] = '"' .. (v:gsub('[%c"\\]', function(c) return string.format("\\u%04x", c:byte()) end)) .. '"'
-    elseif t == "number" then
-        if v ~= v or v == math.huge or v == -math.huge then
-            out[#out + 1] = '"' .. tostring(v) .. '"'
+    elseif kind == "string" then
+        out[#out + 1] = '"' .. (value:gsub('[%c"\\]', function(char) return string.format("\\u%04x", char:byte()) end)) .. '"'
+    elseif kind == "number" then
+        if value ~= value or value == math.huge or value == -math.huge then
+            out[#out + 1] = '"' .. tostring(value) .. '"'
         else
-            out[#out + 1] = string.format("%.10g", v)
+            out[#out + 1] = string.format("%.10g", value)
         end
-    elseif t == "boolean" then
-        out[#out + 1] = tostring(v)
+    elseif kind == "boolean" then
+        out[#out + 1] = tostring(value)
     else
         out[#out + 1] = "null"
     end
@@ -343,7 +339,7 @@ function Audit:Run(full)
         found = FoundDump(),
         regen = ns.Regen and Clean(ns.Regen:Snapshot(), 3),
     }
-    local function save(rows)
+    local function Save(rows)
         result.blizzard = rows
         local out = {}
         Json(result, out)
@@ -353,5 +349,5 @@ function Audit:Run(full)
             :format(key))
     end
     -- Stepping through Blizzard's list (its rows and tooltips) only with "/statsheet audit full".
-    if full then BlizzardDump(save) else save("<skipped>") end
+    if full then BlizzardDump(Save) else Save("<skipped>") end
 end

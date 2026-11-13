@@ -1,25 +1,26 @@
 local _, ns = ...
 
--- What enemies' swings have really done to you: the game's combat feedback (UNIT_COMBAT) for your
--- own unit, physical only, the last few hundred this session. The Defense tab's "Measured in
--- your fights" reads it. Amounts the game hides (in some instances) are left out.
+-- What enemies' swings have done to you: the game's combat feedback (UNIT_COMBAT) for your own
+-- unit, physical only, the last few hundred this session. The Defense tab's "Measured in your
+-- fights" reads it. Amounts the game hides (in some instances) are left out.
 
 local issecret = FrogLib.issecret
 local KEEP = 300
 
+-- The last KEEP swings, oldest overwritten first; `at` is where the newest went.
 local Incoming = { list = {}, at = 0 }
 ns.Incoming = Incoming
 
 local AVOIDED = { DODGE = "dodge", PARRY = "parry", MISS = "miss", BLOCK = "block", DEFLECT = "miss" }
 
-local function Add(e)
+local function Add(swing)
     Incoming.at = Incoming.at % KEEP + 1
-    Incoming.list[Incoming.at] = e
+    Incoming.list[Incoming.at] = swing
 end
 
-local f = CreateFrame("Frame")
-pcall(f.RegisterUnitEvent, f, "UNIT_COMBAT", "player")
-f:SetScript("OnEvent", function(_, _, unit, action, flags, amount, school)
+local events = CreateFrame("Frame")
+pcall(events.RegisterUnitEvent, events, "UNIT_COMBAT", "player")
+events:SetScript("OnEvent", function(_, _, _, action, flags, amount, school)
     if not UnitAffectingCombat("player") then return end -- not falls, lava and the like
     if issecret(action) or issecret(school) or issecret(flags) then return end
     if school ~= nil and school ~= 1 then return end -- physical only
@@ -34,24 +35,25 @@ f:SetScript("OnEvent", function(_, _, unit, action, flags, amount, school)
     end
 end)
 
--- Counts and averages: n, and per kind; the average plain hit and the largest hit.
+-- How many swings (count) and how many of each kind, the average plain hit and the largest hit.
 function Incoming:Summary()
-    local s = { n = 0, hit = 0, crit = 0, crush = 0, dodge = 0, parry = 0, miss = 0, block = 0,
-        plainSum = 0, plainN = 0, largest = 0 }
-    for _, e in pairs(self.list) do
-        s.n = s.n + 1
-        s[e.kind] = s[e.kind] + 1
-        if e.blocked then s.block = s.block + 1 end
-        if e.amount then
-            if e.kind == "hit" and not e.blocked then
-                s.plainSum = s.plainSum + e.amount
-                s.plainN = s.plainN + 1
+    local summary = { count = 0, hit = 0, crit = 0, crush = 0, dodge = 0, parry = 0, miss = 0, block = 0,
+        largest = 0 }
+    local plainTotal, plainCount = 0, 0
+    for _, swing in pairs(self.list) do
+        summary.count = summary.count + 1
+        summary[swing.kind] = summary[swing.kind] + 1
+        if swing.blocked then summary.block = summary.block + 1 end
+        if swing.amount then
+            if swing.kind == "hit" and not swing.blocked then
+                plainTotal = plainTotal + swing.amount
+                plainCount = plainCount + 1
             end
-            s.largest = math.max(s.largest, e.amount)
+            summary.largest = math.max(summary.largest, swing.amount)
         end
     end
-    s.avgHit = s.plainN > 0 and s.plainSum / s.plainN or nil
-    return s
+    summary.averageHit = plainCount > 0 and plainTotal / plainCount or nil
+    return summary
 end
 
 function Incoming:Clear()

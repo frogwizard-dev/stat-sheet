@@ -1,5 +1,12 @@
 # StatSheet
 
+## 0.5.0
+
+- **Ranged** on the switch, for hunters, and what Auto now picks for them. The Offense tab leads with your ranged weapon's paper DPS, shot speed and real DPS, and shows where your shots go against an enemy of your level and a raid boss. "What +10 of each gets you" weighs Agility, Stamina, Intellect and hit for your shots (Strength gives hunters no ranged attack power, so it's left out).
+- As ranged, the Caps section shows your ranged weapon skill and the hit your shots need.
+- Hunters no longer see Caster on the switch; Melee is still there.
+- The Ranged section shows your ranged hit chance.
+
 ## 0.4.2
 
 - Before you equip: a ring or trinket is now compared with both of the ones you wear, a block for each, so you can see which to swap out. To see only the weaker one, as before, turn off "Compare a ring or trinket with both you wear" in the settings.

@@ -1,5 +1,4 @@
-local ADDON, ns = ...
+local _, ns = ...
 
--- The bar textures and fonts the settings offer, and setting a font safely: FrogLib's Media
--- (Libs\FrogLib\Media.lua), with this addon's own fonts listed first.
+-- The fonts the settings offer, and setting a font safely: FrogLib's Media (Libs\FrogLib\Media.lua).
 ns.Media = FrogLib.Media.New()
