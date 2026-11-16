@@ -171,6 +171,16 @@ local function Class() return select(2, UnitClass("player")) end
 -- Attack power from a stat (the client's sum) and stat functions' numbers: FrogLib.Tank.
 local StatAP, Call = Tank.StatAP, Tank.Call
 
+-- Attack power from a stat: the client's sum, else the class's rate (Strength; Agility for
+-- rogues and hunters).
+local function APFromStat(statIndex, stat)
+    local fromClient = StatAP(statIndex, stat)
+    if fromClient then return fromClient end
+    if statIndex == 1 then return stat * (STR_AP[Class()] or 1) end
+    if statIndex == 2 then return stat * (AGI_AP[Class()] or 0) end
+    return 0
+end
+
 -- Ranged attack power from a stat: the client's sum, else the class's rate.
 local function StatRAP(statIndex, stat)
     local fromClient = Call(GetRangedAttackPowerForStat, statIndex, stat)
@@ -201,7 +211,8 @@ local function Gives(statIndex, stat)
         elseif AGI_AP[class] then
             Add("+%d AP", stat * AGI_AP[class])
         end
-        if class == "DRUID" then Add("+%d cat AP", stat) end
+        -- In Cat Form the client's own +AP above already counts it.
+        if class == "DRUID" and DisplayPower() ~= 3 then Add("+%d cat AP", stat) end
         if AGI_RAP[class] then Add("+%d RAP", StatRAP(2, stat)) end
         local dodge = Call(GetDodgeChanceFromAttribute) -- a fraction
         if dodge and dodge > 0 then Add("+%.1f%% dodge", dodge * 100) end
@@ -620,7 +631,7 @@ end
 -- Forever's table for an enemy 0-3 levels up, for a capped weapon skill: its chance to dodge you.
 -- (Your chance to miss it, and the hit that means never missing: FrogLib.Tank.)
 local ENEMY_DODGE = { [0] = 5.0, 5.5, 6.0, 6.5 }
-local SkillShort, HitNeeded = Tank.SkillShort, Tank.HitNeeded
+local SkillShort, SkillOver, HitNeeded = Tank.SkillShort, Tank.SkillOver, Tank.HitNeeded
 
 local Shares = Tank.Shares -- shares of 100% handed out in the game's order: Take(share), Left()
 
@@ -632,7 +643,7 @@ local function SwingTable(over)
     local Take, Left = Shares()
     local swings = {}
     swings.miss = Take(HitNeeded(over) - MeleeHit())
-    swings.dodge = Take(ENEMY_DODGE[over] + SkillShort(skill) * 0.04)
+    swings.dodge = Take(ENEMY_DODGE[over] + (SkillShort(skill) - SkillOver(skill)) * 0.04)
     swings.glance = Take(GlancingChance(over, skill))
     swings.glancePenalty = GlancingPenalty(over, skill)
     -- Crit lost to weapon skill short of the enemy's defense.
@@ -736,7 +747,13 @@ local caps = {
             local current, maximum = WeaponSkill(CapsSlot())
             if not current then return false end
             local gap = SkillGap(0, current)
-            local note = gap > 0 and string.format("%d short: -%s hit and crit, rises as you fight", gap, Percent(gap * 0.04)) or nil
+            local note
+            if gap > 0 then
+                note = string.format("%d short: -%s hit and crit, rises as you fight", gap, Percent(gap * 0.04))
+            elseif current > maximum then
+                note = string.format("%d past the cap: fewer misses and dodges, most of all against bosses",
+                    current - maximum)
+            end
             return SkillText(current, maximum), false, note, current / maximum
         end, tip = function(tooltip)
             local ranged = ns.Ranged()
@@ -762,7 +779,8 @@ local caps = {
             end
             Line(tooltip, " ")
             Line(tooltip, "|cff8c8c8cRises as you fight with this kind of weapon. Forever's own rules: "
-                .. "0.04% per point short of the enemy's defense (its level x 5).|r")
+                .. "0.04% per point short of the enemy's defense (its level x 5). Skill past your cap "
+                .. "closes the gap to a boss's defense, and its misses fall steeply until the gap is 10.|r")
         end },
         -- Hit against the hit that means never missing a same-level enemy (shots' as ranged).
         { label = "Hit Chance", wide = true, get = function()
@@ -795,7 +813,7 @@ ns.Stats = {
     Known = Known, Number = Number, Percent = Percent, OneDecimal = OneDecimal, Tinted = Tinted, Line = Line,
     Class = Class, UsesMana = UsesMana, DisplayPower = DisplayPower, Durability = Durability,
     GearTotals = GearTotals, GearSummary = GearSummary, GEAR_STATS = GEAR_STATS,
-    StatAP = StatAP, Call = Call, BestSchool = BestSchool, ArmorReduction = ArmorReduction,
+    StatAP = APFromStat, Call = Call, BestSchool = BestSchool, ArmorReduction = ArmorReduction,
     ArmorNow = ArmorNow, WeaponSkill = WeaponSkill, DefenseSkill = DefenseSkill,
     MeleeAP = MeleeAP, MeleeHit = MeleeHit, PaperDPS = PaperDPS, SwingTable = SwingTable,
     HasRangedWeapon = HasRangedWeapon, StatRAP = StatRAP, RangedPaperDPS = RangedPaperDPS, ShotTable = ShotTable,

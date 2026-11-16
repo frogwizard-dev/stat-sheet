@@ -14,6 +14,20 @@
 - Attributes leave out effects that come to nothing, such as "+0 RAP" on a warrior's Agility.
 - **Look**: more room between blocks, a faint stripe on every other row in the EllesmereUI look (as the Blizzard look already had), a thin bar in each big number's colour along the top of its tile, and one decimal on bar legends ("Hit 61.7%").
 
+### Improvements
+
+- **Weapon skill past the cap** (racials, Edgemaster's Handguards) now counts: fewer misses and dodges, most of all against bosses, following the curve of Forever's own hit table (a 305 sword misses a raid boss 5.4% of the time, not 9%). The weapon skill row says so. From FrogLib 1.11.0.
+- **Before you equip, for hunters**: a bow, gun, crossbow or thrown weapon shows the **Ranged DPS** it would give you, and so does any item's Agility or attack power; the melee line is called Melee DPS. A **wand** shows its Wand DPS.
+- Before you equip: armor and weapons your class can never use (plate for a mage, axes for a rogue) get no comparison. Mail and plate are still compared for the classes that learn them at 40.
+- Before you equip: a druid in cat or bear form doesn't see weapon damage changes, which don't count in a form.
+- **Rage**: the rage a minute counts both hands when you dual wield.
+- **Measured in your fights** pauses while a bleed (Rend, Deep Wound, Garrote, Rupture, Rake, Rip and creatures' bleeds of those names) is on you, since its ticks look just like swings.
+- **+10 Agility** only counts crit up to the white-hit crit cap.
+- A druid's Agility row shows "cat AP" only outside Cat Form (in it, the AP line already counts it).
+- "Since you logged in": gear swapped in the same moment as a level-up gets its own card.
+- /statsheet audit full stops if combat starts partway through.
+- Under the hood: the panel ignores other players' pets coming and going, and some leftover code is gone.
+
 ### Fixes
 
 - A druid in cat or bear form sees their energy or rage on the Overview's third tile, not their mana.

@@ -106,8 +106,9 @@ local function Names(links)
     return table.concat(list, ", ")
 end
 
--- A gear change: what went on (or came off), what it replaced, and what it did.
-local function GearChange(now)
+-- A gear change: what went on (or came off), what it replaced, and what it did (`bare`: without
+-- what it did, when a level-up card at the same moment already shows the changes).
+local function GearChange(now, bare)
     local put, took = {}, {}
     for slot in pairs(pending.slots) do
         local new, old = now.links[slot], base.links and base.links[slot]
@@ -124,7 +125,7 @@ local function GearChange(now)
         for _, count in pairs(moved) do if count ~= 0 then same = false end end
         if same then return nil end
     end
-    local change = { deltas = Deltas(base, now), effects = Effects(base, now) }
+    local change = bare and {} or { deltas = Deltas(base, now), effects = Effects(base, now) }
     if #put > 0 then
         change.title, change.quality, change.icon = ItemInfo(put[1])
         if #put > 1 then change.title = Names(put) end
@@ -149,6 +150,11 @@ local function Settle()
         if pending.level then
             Add({ title = "Reached level " .. now.level, icon = "Interface\\Icons\\Spell_ChargePositive",
                 deltas = Deltas(base, now), effects = Effects(base, now) })
+            -- Gear changed in the same moment: its own card, the stats being on the level's.
+            if pending.slots then
+                local change = GearChange(now, true)
+                if change then Add(change) end
+            end
         elseif pending.slots then
             local change = GearChange(now)
             if change then Add(change) end

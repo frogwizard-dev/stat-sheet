@@ -13,6 +13,38 @@ ns.Incoming = Incoming
 
 local AVOIDED = { DODGE = "dodge", PARRY = "parry", MISS = "miss", BLOCK = "block", DEFLECT = "miss" }
 
+-- Bleeds tick as physical damage, which the combat feedback can't tell from a swing. While one is
+-- on you nothing is recorded (hits and misses alike, so the shares stay fair). Known by name, read
+-- from these spells so it works in any language: Rend, Deep Wound, Garrote, Rupture, Rake, Rip,
+-- Pounce Bleed, and the creature bleeds that share those names.
+local BLEED_SPELLS = { 772, 12721, 703, 1943, 1822, 1079, 9007 }
+local bleedNames
+local bleeding = false
+
+local function CheckBleeds()
+    if not bleedNames then
+        bleedNames = {}
+        for _, id in ipairs(BLEED_SPELLS) do
+            local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+            if name then bleedNames[name] = true end
+        end
+    end
+    local found = false
+    local get = C_UnitAuras and C_UnitAuras.GetAuraDataByIndex
+    if get then
+        for i = 1, 40 do
+            local ok, aura = pcall(get, "player", i, "HARMFUL")
+            if not ok or not aura then break end
+            local name = aura.name
+            if not issecret(name) and bleedNames[name] then
+                found = true
+                break
+            end
+        end
+    end
+    bleeding = found
+end
+
 local function Add(swing)
     Incoming.at = Incoming.at % KEEP + 1
     Incoming.list[Incoming.at] = swing
@@ -20,8 +52,14 @@ end
 
 local events = CreateFrame("Frame")
 pcall(events.RegisterUnitEvent, events, "UNIT_COMBAT", "player")
-events:SetScript("OnEvent", function(_, _, _, action, flags, amount, school)
+pcall(events.RegisterUnitEvent, events, "UNIT_AURA", "player")
+events:SetScript("OnEvent", function(_, event, _, action, flags, amount, school)
+    if event == "UNIT_AURA" then
+        pcall(CheckBleeds)
+        return
+    end
     if not UnitAffectingCombat("player") then return end -- not falls, lava and the like
+    if bleeding then return end
     if issecret(action) or issecret(school) or issecret(flags) then return end
     if school ~= nil and school ~= 1 then return end -- physical only
     local avoided = AVOIDED[action]

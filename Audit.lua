@@ -255,6 +255,13 @@ local function BlizzardDump(Done)
     local function Step()
         index = index + 1
         local data = list[index]
+        -- Combat started: stop here rather than drive the game's list while it's locked down.
+        if data and InCombatLockdown() then
+            GameTooltip:Hide()
+            rows.stopped = "combat started at row " .. index
+            Done(rows)
+            return
+        end
         if not data then
             GameTooltip:Hide()
             Done(rows)

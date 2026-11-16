@@ -527,7 +527,7 @@ function Panel:Create()
     for kind in pairs(MAKERS) do self.pools[kind] = {} end
     frame:SetScript("OnShow", function() Panel:OnShow() end)
     frame:SetScript("OnHide", function() Panel:OnHide() end)
-    frame:SetScript("OnEvent", function(_, event) Panel:OnEvent(event) end)
+    frame:SetScript("OnEvent", function(_, event, unit) Panel:OnEvent(event, unit) end)
 end
 
 -- The fades in the look's background colour: solid at the edge, clear toward the middle.
@@ -869,9 +869,6 @@ function LAYOUTS.section(self, block, y, context)
         local wide = wides[index]
         local x, width
         if wide then
-            if column == 1 then
-                y, column = y - rowHeight, 0
-            end
             x, width = PAD, context.inner
         else
             x, width = PAD + column * (context.half + GAP), context.half
@@ -911,7 +908,6 @@ function LAYOUTS.section(self, block, y, context)
             column = 1
         end
     end
-    if column == 1 then y = y - rowHeight end
     return y - BLOCK_GAP
 end
 
@@ -1413,21 +1409,15 @@ function Panel:Queue()
     self.queued = true
     C_Timer.After(0.25, function()
         self.queued = false
-        if self.frame:IsVisible() then self:Layout() else self.dirty = true end
+        if self.frame:IsVisible() then self:Layout() end
     end)
 end
 
 -- In combat the sheet holds still (unit events like UNIT_AURA fire constantly there) and
 -- catches up once when combat ends.
-function Panel:OnEvent(event)
-    if event == "PLAYER_REGEN_ENABLED" then
-        self.dirty = false
-        self:Queue()
-    elseif InCombatLockdown() then
-        self.dirty = true
-    else
-        self:Queue()
-    end
+function Panel:OnEvent(event, unit)
+    if event == "UNIT_PET" and unit ~= "player" then return end -- another player's pet
+    if event == "PLAYER_REGEN_ENABLED" or not InCombatLockdown() then self:Queue() end
 end
 
 -- An event this client doesn't have raises an error when registered, so each is tried alone.
@@ -1438,7 +1428,6 @@ function Panel:OnShow()
     for _, event in ipairs(ns.Events) do pcall(frame.RegisterEvent, frame, event) end
     pcall(frame.RegisterEvent, frame, "PLAYER_REGEN_ENABLED")
     if self.mode == "replace" then self:HideList() end
-    self.dirty = false
     self:Layout()
 end
 

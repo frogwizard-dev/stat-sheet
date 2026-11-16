@@ -8,6 +8,9 @@ local _, ns = ...
 local Stats, Section = ns.Stats, ns.SectionByKey
 local Known, Number, Percent, OneDecimal, Line = Stats.Known, Stats.Number, Stats.Percent, Stats.OneDecimal, Stats.Line
 
+-- Spells known, buffs on you, and your threat multiplier with its parts.
+local KnowsRank, HasBuff, Threat = FrogLib.Tank.KnowsRank, FrogLib.Tank.HasBuff, FrogLib.Tank.Threat
+
 local CASTERS = { MAGE = true, PRIEST = true, WARLOCK = true }
 
 local function EHP()
@@ -160,7 +163,10 @@ local function MeleeWorth()
     local agility = StatValue(2)
     local crit = Fraction(GetCritChanceFromStat, 2, agility + 10) - Fraction(GetCritChanceFromStat, 2, agility)
     local agilityAP = (Stats.StatAP(2, agility + 10) or 0) - (Stats.StatAP(2, agility) or 0)
-    local agilityDPS = paper * crit / 100 + DPSFromAP(agilityAP)
+    -- Crit only helps white hits up to the crit cap (what misses, dodges and glancing blows leave).
+    local room = math.max(0, 100 - swings.miss - swings.dodge - swings.glance + swings.critPenalty
+        - Known(GetCritChance()))
+    local agilityDPS = paper * math.min(crit, room) / 100 + DPSFromAP(agilityAP)
     local dodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agility) * 10
     rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agilityDPS), colorKey = "Attack",
         gain = agilityDPS / real, detail = string.format("+%.1f%% crit · +%.1f%% dodge · +20 armor%s", crit, dodge,
@@ -437,15 +443,8 @@ end
 local function BlockAbility()
     if not HasShield() then return nil end
     local class = Stats.Class()
-    local IsKnown = IsPlayerSpell or IsSpellKnown
-    local function Knows(...)
-        for _, id in ipairs({ ... }) do
-            if IsKnown and IsKnown(id) then return true end
-        end
-        return false
-    end
-    if class == "WARRIOR" and Knows(2565) then return "Shield Block", 75 end
-    if class == "PALADIN" and Knows(20925, 20927, 20928) then return "Holy Shield", 30 end
+    if class == "WARRIOR" and KnowsRank({ 2565 }) > 0 then return "Shield Block", 75 end
+    if class == "PALADIN" and KnowsRank({ 20925, 20927, 20928 }) > 0 then return "Holy Shield", 30 end
     return nil
 end
 
@@ -500,7 +499,7 @@ local tanking = {
             if not defense then return false end
             local level = UnitLevel("player")
             -- Each point of defense takes 0.04% off: 5% plus the boss's skill over your defense.
-            local need = (level + 3) * Stats.SKILL_PER_LEVEL + 125
+            local need = FrogLib.Tank.CritCapNeed(3, level)
             local incoming = Stats.IncomingTable(3)
             if defense >= need then return "None", false, "enough defense that a boss can't crit you", 1 end
             return Percent(incoming.crit), false, string.format("%d defense stops them (you have %d: %d more)",
@@ -513,7 +512,7 @@ local tanking = {
             Line(tooltip, "Defense to be crit by nothing:")
             for over = 0, 3 do
                 Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
-                    tostring((level + over) * Stats.SKILL_PER_LEVEL + 125))
+                    tostring(FrogLib.Tank.CritCapNeed(over, level)))
             end
             Line(tooltip, "|cff8c8c8cA long way off at most levels: a goal for gear later on.|r")
         end },
@@ -552,18 +551,25 @@ local rage = {
     cells = {
         { label = "Per hit you land", wide = true, get = function()
             if not UsesRage() then return false end
-            local low, high = UnitDamage("player")
+            local low, high, offLow, offHigh = UnitDamage("player")
             local average = (Known(low) + Known(high)) / 2
             local perHit = 7.5 * average / RageConversion()
-            local speed = Known((UnitAttackSpeed("player")))
+            local speed, offSpeed = UnitAttackSpeed("player")
+            speed = Known(speed)
             local swings = Stats.SwingTable(0)
             -- Misses and dodges give none; crits twice the damage, glancing blows less.
             local perMinute = perHit * swings.mult * 60 / speed
+            if offSpeed then
+                -- The off hand's own (already halved) damage makes rage the same way.
+                local offPerHit = 7.5 * (Known(offLow) + Known(offHigh)) / 2 / RageConversion()
+                perMinute = perMinute + offPerHit * swings.mult * 60 / Known(offSpeed)
+            end
             return string.format("%.1f rage", perHit), false,
                 string.format("crits %.1f · about %d a minute from your swings", perHit * 2, perMinute + 0.5)
         end, tip = function(tooltip)
             Line(tooltip, "Rage from your main hand's white hits against an enemy of your level: 7.5 x the "
-                .. "damage, divided by your level's rage conversion. Misses and dodges give none.")
+                .. "damage, divided by your level's rage conversion. Misses and dodges give none. The rage "
+                .. "a minute counts both hands when you dual wield.")
             Line(tooltip, " ")
             Line(tooltip, "|cff8c8c8cClassic's formula: an estimate if Forever's differs. Abilities that deal damage "
                 .. "don't make rage; white hits do.|r")
@@ -641,7 +647,7 @@ local supplies = {
 ------------------------------------------------------------------------------
 
 -- Spells known, buffs on you, and your threat multiplier with its parts: FrogLib.Tank.
-local KnowsRank, HasBuff, Threat = FrogLib.Tank.KnowsRank, FrogLib.Tank.HasBuff, FrogLib.Tank.Threat
+-- KnowsRank, HasBuff, Threat: FrogLib.Tank (at the top of the file).
 
 local function ThreatCell()
     return { label = "Threat", wide = true, get = function()

@@ -9,6 +9,50 @@ local Stats = ns.Stats
 -- Reading an item's stats and where it would go: FrogLib.Tank (shared with other add-ons).
 local Tank = FrogLib.Tank
 
+-- Who can wear what, Classic's rules: armor by its subclass, weapons by theirs. Mail and plate
+-- count for the classes that learn them at 40, so they're compared before then too.
+local ARMOR_CLASSES = {
+    [2] = { WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true, SHAMAN = true, DRUID = true }, -- leather
+    [3] = { WARRIOR = true, PALADIN = true, HUNTER = true, SHAMAN = true },                             -- mail
+    [4] = { WARRIOR = true, PALADIN = true },                                                           -- plate
+    [6] = { WARRIOR = true, PALADIN = true, SHAMAN = true },                                            -- shields
+    [7] = { PALADIN = true }, [8] = { DRUID = true }, [9] = { SHAMAN = true },                          -- librams, idols, totems
+}
+local function Set(...)
+    local set = {}
+    for _, value in ipairs({ ... }) do set[value] = true end
+    return set
+end
+-- Weapon subclasses: 0/1 axes, 2 bows, 3 guns, 4/5 maces, 6 polearms, 7/8 swords, 10 staves,
+-- 13 fist weapons, 15 daggers, 16 thrown, 18 crossbows, 19 wands. Others (14, 20) anyone.
+local WEAPON_CLASSES = {
+    WARRIOR = Set(0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 13, 15, 16, 18),
+    PALADIN = Set(0, 1, 4, 5, 6, 7, 8),
+    HUNTER = Set(0, 1, 2, 3, 6, 7, 8, 10, 13, 15, 16, 18),
+    ROGUE = Set(2, 3, 4, 7, 13, 15, 16, 18),
+    PRIEST = Set(4, 10, 15, 19),
+    SHAMAN = Set(0, 1, 4, 5, 10, 13, 15),
+    MAGE = Set(7, 10, 15, 19),
+    WARLOCK = Set(7, 10, 15, 19),
+    DRUID = Set(4, 5, 10, 13, 15),
+}
+local ANYONE_WEAPON = { [14] = true, [20] = true }
+
+local function CanWear(link)
+    local _, _, _, _, _, classID, subclassID = C_Item.GetItemInfoInstant(link)
+    local class = Stats.Class()
+    if classID == ((Enum.ItemClass and Enum.ItemClass.Armor) or 4) then
+        local who = ARMOR_CLASSES[subclassID]
+        return not who or who[class] == true
+    elseif classID == ((Enum.ItemClass and Enum.ItemClass.Weapon) or 2) then
+        local can = WEAPON_CLASSES[class]
+        return not can or ANYONE_WEAPON[subclassID] or can[subclassID] == true
+    end
+    return true
+end
+
+local WAND = 19
+
 local function StatAfter(statIndex, change)
     local _, stat = UnitStat("player", statIndex)
     return Stats.Known(stat), Stats.Known(stat) + change
@@ -18,8 +62,11 @@ end
 -- `old` is one link or { [slot] = link } for everything it replaces (a two-hander: both hands).
 local function Changes(newLink, old, slot)
     -- diff.dps: weapon DPS per hand; the off hand hits for half (as the game's own numbers do).
-    local diff = Tank.Diff(newLink, old, slot)
+    local diff, _, _, new = Tank.Diff(newLink, old, slot)
     local lines = {}
+    local class = Stats.Class()
+    -- A druid in cat or bear form fights with its paws: the weapon's own damage doesn't count.
+    if class == "DRUID" and Stats.DisplayPower() ~= 0 then diff.dps = 0 end
     local function Add(label, value, template, suffix)
         if math.abs(value) < 0.05 then return end
         lines[#lines + 1] = { label, string.format(template, value) .. (suffix or ""), value > 0 }
@@ -36,7 +83,22 @@ local function Changes(newLink, old, slot)
     local critNew = Stats.Call(GetCritChanceFromStat, 2, agilityNew) or 0
     local paperChange = diff.dps + apChange / Stats.AP_PER_DPS
     local realChange = paperChange * swings.mult + (paper + paperChange) * (critNew - critNow)
-    Add("Real DPS", realChange, "%+.1f")
+    Add(class == "HUNTER" and "Melee DPS" or "Real DPS", realChange, "%+.1f")
+
+    -- The ranged slot: a wand's own damage; a hunter's shots, with ranged attack power from
+    -- Agility and items, and crit.
+    local oldRanged = slot == (INVSLOT_RANGED or 18) and Tank.ItemStats(type(old) == "table" and old[slot] or old) or nil
+    local newSub = select(7, C_Item.GetItemInfoInstant(newLink))
+    if oldRanged and newSub == WAND then
+        Add("Wand DPS", new.dps - oldRanged.dps, "%+.1f")
+    elseif class == "HUNTER" and Stats.HasRangedWeapon() then
+        local rangedPaper = Stats.RangedPaperDPS()
+        local shots = Stats.ShotTable(0)
+        local weaponChange = oldRanged and (new.dps - oldRanged.dps) or 0
+        local rapChange = diff.ap + (diff.rap or 0) + Stats.StatRAP(2, agilityNew) - Stats.StatRAP(2, agilityNow)
+        local rangedChange = weaponChange + rapChange / Stats.AP_PER_DPS
+        Add("Ranged DPS", rangedChange * shots.mult + (rangedPaper + rangedChange) * (critNew - critNow), "%+.1f")
+    end
 
     -- Effective health: Stamina, armor (items and Agility).
     local health = Stats.Known(UnitHealthMax("player"))
@@ -81,6 +143,8 @@ local function OnTooltip(tooltip)
         if not link then return end
         -- Not cached yet: its stats would read as nothing, and the old item as all loss.
         if not C_Item.GetItemInfo(link) then return end
+        -- Armor or a weapon your class can never use.
+        if not CanWear(link) then return end
         -- Hovering one of your own slots on the character sheet.
         local owner = tooltip:GetOwner()
         local ownerName = owner and owner.GetName and owner:GetName()
