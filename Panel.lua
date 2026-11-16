@@ -10,7 +10,7 @@ ns.Panel = Panel
 local PAD = 10          -- left and right margin inside the panel
 local GAP = 12          -- between the two columns of a section
 local TILE_GAP = 6
-local BLOCK_GAP = 8
+local BLOCK_GAP = 12     -- between blocks, so each header starts a clear group
 local NARROW = 280      -- inner widths below this get the narrow layout
 
 -- EllesmereUI's character sheet colours, and the overrides from its options page when it's
@@ -37,6 +37,7 @@ local LOOKS = {
     ellesmere = {
         text = { 0.90, 0.91, 0.92 }, label = { 0.65, 0.69, 0.72 }, note = { 0.60, 0.64, 0.67 },
         caption = { 0.55, 0.58, 0.62 }, colourValues = true, headerLines = true,
+        rowShade = { 1, 1, 1, 0.03 }, accent = true, switchEdge = { 0.22, 0.26, 0.30, 1 },
         cardBg = { 0.086, 0.106, 0.125, 1 }, cardEdge = { 0.137, 0.165, 0.192, 1 },
         track = { 0.137, 0.165, 0.192, 1 }, tabIdle = { 0.55, 0.58, 0.62 },
         sizes = { body = 1, note = 0, caption = -1, number = 9, header = 2, tab = 1 },
@@ -48,7 +49,7 @@ local LOOKS = {
         headerAtlas = "UI-Character-Info-Title", rowAtlas = "UI-Character-Info-Line-Bounce",
         border = "common-insideframe", bar = { 0.79, 0.60, 0.18 },
         cardBg = { 0, 0, 0, 0.45 }, cardEdge = { 0.42, 0.32, 0.19, 1 },
-        track = { 0, 0, 0, 0.5 }, tabIdle = { 0.79, 0.66, 0.42 },
+        track = { 0, 0, 0, 0.5 }, tabIdle = { 0.79, 0.66, 0.42 }, switchEdge = { 0.42, 0.32, 0.19, 1 },
         sizes = { body = 0, note = 0, caption = -1, number = 7, header = 1, tab = 0 },
         fade = { 0, 0, 0, 0.6 },
     },
@@ -262,7 +263,8 @@ local MAKERS = {}
 local ROLE_NAMES = { auto = "Auto", melee = "Melee", ranged = "Ranged", caster = "Caster" }
 local ROLE_BUTTONS = 3
 
--- One switch button: the choice lit, and under Auto what it picked lit faintly.
+-- One switch button: the choice lit, and under Auto what it picked lit faintly. The buttons sit
+-- edge to edge inside one outline, as a segmented control.
 local function PaintRole(button, look, gold)
     local choice = ns.RoleChoice()
     if button.role == choice then
@@ -272,7 +274,7 @@ local function PaintRole(button, look, gold)
         button.bg:SetColorTexture(gold[1], gold[2], gold[3], 0.28)
         SetColor(button.text, look.text)
     else
-        button.bg:SetColorTexture(0, 0, 0, 0.35)
+        button.bg:SetColorTexture(0, 0, 0, 0.25)
         SetColor(button.text, look.tabIdle)
     end
 end
@@ -348,9 +350,14 @@ function MAKERS.tile(self)
     local tile = CreateFrame("Button", nil, self.content)
     tile.bg = tile:CreateTexture(nil, "BACKGROUND")
     tile.bg:SetAllPoints()
+    -- A thin bar in the tile's colour along its top edge (EllesmereUI's look).
+    tile.accent = tile:CreateTexture(nil, "ARTWORK")
+    tile.accent:SetPoint("TOPLEFT")
+    tile.accent:SetPoint("TOPRIGHT")
+    tile.accent:SetHeight(2)
     tile.caption = Text(tile)
-    tile.caption:SetPoint("TOPLEFT", 8, -8)
-    tile.caption:SetPoint("TOPRIGHT", -6, -8)
+    tile.caption:SetPoint("TOPLEFT", 8, -10)
+    tile.caption:SetPoint("TOPRIGHT", -6, -10)
     tile.caption:SetJustifyH("LEFT")
     tile.value = Text(tile)
     tile.value:SetJustifyH("LEFT")
@@ -384,7 +391,6 @@ function MAKERS.card(self)
     card.bg:SetAllPoints()
     card.title = Text(card)
     card.title:SetPoint("TOPLEFT", 10, -10)
-    card.toggles = RoleButtons(card)
     card.rows = {}
     return card
 end
@@ -413,12 +419,13 @@ function MAKERS.entry(self)
     return entry
 end
 
--- The switch on its own line.
+-- The switch on its own line: a label, and the buttons in one outlined group.
 function MAKERS.roleBar(self)
     local bar = CreateFrame("Frame", nil, self.content)
     bar.label = Text(bar)
     bar.label:SetPoint("LEFT", 0, 0)
-    bar.buttons = RoleButtons(bar)
+    bar.group = CreateFrame("Frame", nil, bar)
+    bar.buttons = RoleButtons(bar.group)
     return bar
 end
 
@@ -702,7 +709,7 @@ function LAYOUTS.tiles(self, block, y, context)
             frame.sub:SetText(reading.note or "")
             noteHeight = math.max(noteHeight, math.min(frame.sub:GetStringHeight(), noteSize * 2 + 4))
         end
-        local height = 8 + captionSize + 4 + numberSize + 4 + noteHeight + 8
+        local height = 10 + captionSize + 4 + numberSize + 4 + noteHeight + 8
         for i, tile in ipairs(row) do
             local reading = readings[tile]
             local frame = frames[i]
@@ -710,6 +717,13 @@ function LAYOUTS.tiles(self, block, y, context)
             frame:SetSize(width, height)
             frame.bg:SetColorTexture(unpack(look.cardBg))
             Edges(frame, look.cardEdge, context.pixel)
+            if look.accent then
+                local r, g, b = SectionColor(tile.colorKey)
+                frame.accent:SetColorTexture(r, g, b, 0.85)
+                frame.accent:Show()
+            else
+                frame.accent:Hide()
+            end
             SetFont(frame.caption, context.fonts.bold, captionSize)
             SetFont(frame.value, context.fonts.number, numberSize)
             frame.caption:SetText(reading.label or "")
@@ -842,9 +856,14 @@ function LAYOUTS.section(self, block, y, context)
         frame:SetWidth(width)
         local height = self:FillCell(frame, reading, context, width, wide, r, g, b)
         frame:SetHeight(height)
-        -- Blizzard's list shades every other line.
-        if look.rowAtlas and rowIndex % 2 == 1 and (wide or column == 0) then
-            frame.shade:SetAtlas(look.rowAtlas)
+        -- Every other line shaded, as Blizzard's list does (a faint stripe in EllesmereUI's look),
+        -- so a name and its value far across the row read as one line.
+        if (look.rowAtlas or look.rowShade) and rowIndex % 2 == 1 and (wide or column == 0) then
+            if look.rowAtlas then
+                frame.shade:SetAtlas(look.rowAtlas)
+            else
+                frame.shade:SetColorTexture(unpack(look.rowShade))
+            end
             frame.shade:ClearAllPoints()
             frame.shade:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD - 6, y)
             frame.shade:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", context.inner + 6, 0)
@@ -1015,7 +1034,7 @@ function LAYOUTS.bars(self, block, y, context)
     return y - BLOCK_GAP + 4
 end
 
--- What +10 of each stat gets you, in a card, with the switch for anyone who has a choice.
+-- What +10 of each stat gets you, in a card (the tab's switch picks melee, ranged or caster).
 function LAYOUTS.worth(self, block, y, context)
     local rows, stale = Rows("worth", ns.Worth)
     if not rows or #rows == 0 then return y end
@@ -1031,34 +1050,8 @@ function LAYOUTS.worth(self, block, y, context)
     card.title:SetText("What +10 of each gets you")
     card.title:SetTextColor(gold[1], gold[2], gold[3])
 
-    -- The switch: beside the title, or under it when there isn't room.
-    local roles = ns.Roles()
-    local total = 0
-    for i, button in ipairs(card.toggles) do
-        button.role = roles and roles[i]
-        SetFont(button.text, context.fonts.bold, context.size + look.sizes.note - 1)
-        button.text:SetText(ROLE_NAMES[button.role] or "")
-        total = total + button.text:GetStringWidth() + 14
-    end
-    local below = roles and card.title:GetStringWidth() + total + 28 > context.inner
-    local x, top = -8, below and -(10 + titleSize + 6) or -8
-    for i = #card.toggles, 1, -1 do
-        local button = card.toggles[i]
-        if roles then
-            local width = button.text:GetStringWidth() + 12
-            button:SetSize(width, titleSize + 4)
-            button:ClearAllPoints()
-            button:SetPoint("TOPRIGHT", card, "TOPRIGHT", x, top)
-            x = x - width - 2
-            PaintRole(button, look, gold)
-            button:Show()
-        else
-            button:Hide()
-        end
-    end
-
     local inner = context.inner - 20
-    local down = 10 + titleSize + 10 + (below and titleSize + 8 or 0)
+    local down = 10 + titleSize + 10
     local textSize = context.size + look.sizes.body
     local noteSize = context.size + look.sizes.note - 1
     for i, row in ipairs(rows) do
@@ -1267,7 +1260,8 @@ function LAYOUTS.entries(self, block, y, context)
     return y - BLOCK_GAP + 5
 end
 
--- The switch on a line of its own, for anyone who has a choice.
+-- The switch on a line of its own, for anyone who has a choice: "Show as", and the buttons as one
+-- outlined group on the right.
 function LAYOUTS.role(self, block, y, context)
     local roles = ns.Roles()
     if not roles then return y end
@@ -1281,19 +1275,23 @@ function LAYOUTS.role(self, block, y, context)
     bar.label:SetText("Show as")
     SetColor(bar.label, look.label)
     local gold = { SectionColor("Insights") }
-    local x = 0
+    local x, pixel = 0, context.pixel
     for i = #bar.buttons, 1, -1 do
         local button = bar.buttons[i]
         button.role = roles[i]
         SetFont(button.text, context.fonts.bold, size - 1)
         button.text:SetText(ROLE_NAMES[button.role])
         local width = button.text:GetStringWidth() + 18
-        button:SetSize(width, height)
+        button:SetSize(width, height - 2 * pixel)
         button:ClearAllPoints()
-        button:SetPoint("TOPRIGHT", bar, "TOPRIGHT", x, 0)
-        x = x - width - 2
+        button:SetPoint("TOPRIGHT", bar.group, "TOPRIGHT", -(x + pixel), -pixel)
+        x = x + width
         PaintRole(button, look, gold)
     end
+    bar.group:ClearAllPoints()
+    bar.group:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
+    bar.group:SetSize(x + 2 * pixel, height)
+    Edges(bar.group, look.switchEdge, pixel)
     return y - height - BLOCK_GAP
 end
 

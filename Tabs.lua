@@ -287,8 +287,10 @@ local COLORS = {
     weapon = { 0.72, 0.40, 0.18 }, ap = { 1, 0.70, 0.42 },
 }
 
+-- One decimal on a bar's legend ("Hit 61.7%"): the tooltip-grade precision is noise there.
 local function Segment(share, color, name)
-    return { pct = share, color = color, text = string.format("%s %s", name, Percent(share)) }
+    local text = string.format("%.1f", Known(share)):gsub("%.0$", "")
+    return { pct = share, color = color, text = string.format("%s %s%%", name, text) }
 end
 
 local function SwingRow(over, label)
@@ -1185,7 +1187,17 @@ local castsFromFull = { kind = "entries", key = "casts", title = "Casts from ful
 local roleSwitch = { kind = "role" }
 
 -- Offense follows the switch: spells first as a caster, the ranged weapon first as ranged, the
--- melee weapon first otherwise.
+-- melee weapon first otherwise. Each leads with its own numbers, then its caps and where the
+-- damage goes; the other kinds of attack come after, for reference.
+local caps = { kind = "section", section = Section.caps }
+
+-- The Caps block's Hit Chance says more than the plain Hit row, so the row steps aside for it
+-- (unless Caps is turned off).
+local function CapsSkip(skip)
+    if ns.db.sections.caps ~= false then skip.Hit = true end
+    return skip
+end
+
 local function OffenseBlocks()
     if Caster() then
         return {
@@ -1204,26 +1216,27 @@ local function OffenseBlocks()
             roleSwitch,
             { kind = "tiles", tiles = rangedTiles },
             -- The Shot and Paper DPS tiles show the weapon's row.
-            { kind = "section", section = Section.ranged, skip = { [rangedWeapon] = true } },
+            { kind = "section", section = Section.ranged, skip = CapsSkip({ [rangedWeapon] = true }) },
+            caps,
             shotsGo,
             { kind = "section", section = pet },
             { kind = "section", section = Section.melee },
             { kind = "section", section = Section.spell },
         }
     end
-    local blocks = {
+    return {
+        roleSwitch,
         { kind = "tiles", tiles = meleeTiles },
         -- The Swing and Paper DPS tiles show the main hand's line.
-        { kind = "section", section = Section.melee, skip = { ["Main Hand"] = true } },
+        { kind = "section", section = Section.melee, skip = CapsSkip({ ["Main Hand"] = true }) },
+        caps,
+        swingsGo,
+        dpsSource,
         { kind = "section", section = rage },
         { kind = "section", section = Section.ranged },
-        { kind = "section", section = pet },
         { kind = "section", section = Section.spell },
-        dpsSource,
-        swingsGo,
+        { kind = "section", section = pet },
     }
-    if ns.Roles() then table.insert(blocks, 1, roleSwitch) end
-    return blocks
 end
 
 ------------------------------------------------------------------------------
@@ -1234,12 +1247,15 @@ ns.Tabs = {
     {
         key = "overview", title = "Overview",
         blocks = {
+            roleSwitch,
             { kind = "pinned" },
             { kind = "tiles", tiles = { damageTile, ehpTile, powerTile } },
             { kind = "section", section = Section.attributes },
             { kind = "worth" },
             { kind = "section", section = ready },
-            { kind = "section", section = Section.caps },
+            -- Its rage or energy and energy regen are on the tile above already.
+            { kind = "section", section = Section.general,
+              skip = { [Section.general.cells[1]] = true, [Section.general.cells[2]] = true } },
             { kind = "changes", key = "lastChange", title = "Last change", colorKey = "Attributes", limit = 1, hideEmpty = true },
         },
     },
@@ -1269,13 +1285,13 @@ ns.Tabs = {
                     return Percent(incoming.miss + incoming.dodge + incoming.parry), false, "of melee swings"
                 end },
             } },
+            { kind = "section", section = Section.defense },
             { kind = "bars", key = "incoming", title = "When you're swung at", colorKey = "Defense", rows = function()
                 return { IncomingRow(0, SameLabel()), IncomingRow(3, BossLabel()) }
             end },
             { kind = "section", section = tanking },
-            { kind = "section", section = measured },
             { kind = "section", section = armorByLevel },
-            { kind = "section", section = Section.defense },
+            { kind = "section", section = measured },
         },
     },
     {
@@ -1310,9 +1326,8 @@ ns.Tabs = {
                 return Stats.GearSummary((Stats.GearTotals()))
             end },
             { kind = "section", section = supplies },
-            { kind = "section", section = professions },
             { kind = "changes", key = "changes", title = "Since you logged in", colorKey = "Attributes", limit = 8 },
-            { kind = "section", section = Section.general },
+            { kind = "section", section = professions },
         },
     },
     {
@@ -1338,6 +1353,6 @@ function ns.PinSections()
             end
         end
     end
-    for _, section in ipairs({ Section.spell, Section.melee, rage, Section.ranged, pet }) do Add(section) end
+    for _, section in ipairs({ Section.spell, Section.melee, Section.caps, rage, Section.ranged, pet }) do Add(section) end
     return sections
 end

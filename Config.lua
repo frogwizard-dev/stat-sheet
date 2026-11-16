@@ -40,28 +40,18 @@ end
 local function BuildLayout(page)
     local db = ns.db
     local place = UI.Placer()
-    place(UI.Dropdown(page, "Placement", MODES, function() return db.mode end,
-        function(value) db.mode = value end), 30)
-    place(UI.Stepper(page, "Extra width", 0, 240, 10, function() return db.extraWidth end,
-        function(value) db.extraWidth = value end), 26)
-    place(UI.Stepper(page, "Width (beside)", 180, 420, 10, function() return db.width end,
-        function(value) db.width = value end), 32)
-    place(UI.Dropdown(page, "Look", THEMES, function() return db.theme end,
-        function(value) db.theme = value end), 30)
-    place(UI.Dropdown(page, "Font", Fonts, function() return db.font end,
-        function(value) db.font = value end), 30)
-    place(UI.Stepper(page, "Text size", 8, 16, 1, function() return db.size end,
-        function(value) db.size = value end), 26)
-    place(UI.Stepper(page, "Row spacing", 0, 10, 1, function() return db.rowGap end,
-        function(value) db.rowGap = value end), 34)
-    place(UI.Checkbox(page, "Hide stats that are zero (parry, block, hit, resistances...)",
-        function() return db.hideZero end, function(value) db.hideZero = value end), 28)
-    place(UI.Checkbox(page, "Show what each attribute gives (+56 AP, +160 HP...)",
-        function() return db.attrEffects end, function(value) db.attrEffects = value end), 28)
-    place(UI.Checkbox(page, "On item tooltips, show what wearing it would change",
-        function() return db.compare end, function(value) db.compare = value end), 28)
-    place(UI.Checkbox(page, "Compare a ring or trinket with both you wear (not just the weaker)",
-        function() return db.compareBoth end, function(value) db.compareBoth = value end), 34)
+    place(UI.Dropdown(page, "Placement", MODES, db, "mode"), 30)
+    place(UI.Stepper(page, "Extra width", 0, 240, 10, db, "extraWidth"), 26)
+    place(UI.Stepper(page, "Width (beside)", 180, 420, 10, db, "width"), 32)
+    place(UI.Dropdown(page, "Look", THEMES, db, "theme"), 30)
+    place(UI.Dropdown(page, "Font", Fonts, db, "font"), 30)
+    place(UI.Stepper(page, "Text size", 8, 16, 1, db, "size"), 26)
+    place(UI.Stepper(page, "Row spacing", 0, 10, 1, db, "rowGap"), 34)
+    place(UI.Checkbox(page, "Hide stats that are zero (parry, block, hit, resistances...)", db, "hideZero"), 28)
+    place(UI.Checkbox(page, "Show what each attribute gives (+56 AP, +160 HP...)", db, "attrEffects"), 28)
+    place(UI.Checkbox(page, "On item tooltips, show what wearing it would change", db, "compare"), 28)
+    place(UI.Checkbox(page, "Compare a ring or trinket with both you wear (not only the weaker)",
+        db, "compareBoth"), 34)
     place(UI.Help(page, "Hover a stat for the details behind it, shift-click it to pin it to the top of "
         .. "the Overview, and click a header to fold its block away. In combat the game can hide some values; those keep their last reading, "
         .. "dimmed, until combat ends.", 400), 52, 4)
@@ -70,28 +60,33 @@ end
 local SECTION_LABELS = {
     { "attributes", "Attributes (Overview)" },
     { "ready", "Ready to go: missing buffs, bag space (Overview)" },
-    { "caps", "Caps: weapon skill, defense, hit (Overview)" },
+    { "general", "General: speed, rage or energy (Overview)" },
     { "melee", "Melee (Offense)" },
+    { "caps", "Caps: weapon skill, hit, crit cap (Offense)" },
+    { "rage", "Rage: what swings and hits taken give (Offense)" },
     { "ranged", "Ranged, with a ranged weapon or wand (Offense)" },
     { "spell", "Spells, for classes with mana (Offense)" },
     { "pet", "Your pet (Offense)" },
-    { "rage", "Rage: what swings and hits taken give (Offense)" },
+    { "defense", "Defense: armor, defense skill, dodge, resistances (Defense)" },
     { "tanking", "Tanking a raid boss: threat, crushing blows, crits, block value (Defense)" },
-    { "measured", "Measured in your fights: what enemies' swings really did (Defense)" },
     { "armorLevels", "Armor by enemy level (Defense)" },
-    { "defense", "Defense: armor, dodge, resistances (Defense)" },
+    { "measured", "Measured in your fights: what enemies' swings really did (Defense)" },
     { "supplies", "Ammo, weapon buffs & enchants (Gear)" },
     { "professions", "Professions (Gear)" },
-    { "general", "General: speed, rage or energy (Gear)" },
 }
+
+-- Defense skill moved from Caps (Overview) to Defense (0.6.0): a pin on it follows it there.
+local function MovePins(pins)
+    for i, key in ipairs(pins) do
+        if key == "caps:" .. (DEFENSE or "Defense") then pins[i] = "defense:Defense skill" end
+    end
+end
 
 local function BuildSections(page)
     local db = ns.db
     local place = UI.Placer()
     for _, section in ipairs(SECTION_LABELS) do
-        local key = section[1]
-        place(UI.Checkbox(page, section[2], function() return db.sections[key] end,
-            function(value) db.sections[key] = value end), 28)
+        place(UI.Checkbox(page, section[2], db.sections, section[1]), 28)
     end
 end
 
@@ -122,6 +117,7 @@ loader:SetScript("OnEvent", function(_, event, addonName)
         StatSheetDB = StatSheetDB or {}
         CopyDefaults(ns.defaults, StatSheetDB)
         ns.db = StatSheetDB
+        if type(StatSheetDB.pins) == "table" then MovePins(StatSheetDB.pins) end
     elseif event == "PLAYER_LOGIN" then
         if _G.CharacterFrame then ns.Panel:Apply() end
     end

@@ -1,5 +1,17 @@
 # StatSheet
 
+## 0.6.0
+
+- **Tidier tabs**: each block now sits with the stats it belongs to.
+  - **Offense** leads with your main kind of attack, then its **Caps** (moved here from the Overview), then where your swings, shots or spells go and where your damage comes from. The other kinds of attack come after.
+  - **Defense** starts with your armor, defense skill, dodge, parry and block, then what happens when you're swung at, tanking, armor by enemy level, and what was measured in your fights.
+  - **Gear** keeps to your gear: what your items give, ammo, weapon buffs and enchants, what changed since you logged in, then professions. **General** (speed, threat) moved to the Overview.
+- **Defense skill** is on the Defense tab now, not in Caps. If you'd pinned it, the pin moves with it.
+- **One Melee / Ranged / Caster switch**, in the same place at the top of the Overview and Offense, drawn as one outlined group. "What +10 of each gets you" no longer has a switch of its own.
+- On the Offense tab, the plain Hit row makes way for Caps' Hit Chance, which shows the same number against the hit you need (unless Caps is turned off).
+- The Overview's General block no longer repeats the rage or energy shown on the tile above, and normal running speed (100%) counts as a zero, so the block only shows up when something's changed.
+- **Look**: more room between blocks, a faint stripe on every other row in the EllesmereUI look (as the Blizzard look already had), a thin bar in each big number's colour along the top of its tile, and one decimal on bar legends ("Hit 61.7%").
+
 ## 0.5.0
 
 - **Ranged** on the switch, for hunters, and what Auto now picks for them. The Offense tab leads with your ranged weapon's paper DPS, shot speed and real DPS, and shows where your shots go against an enemy of your level and a raid boss. "What +10 of each gets you" weighs Agility, Stamina, Intellect and hit for your shots (Strength gives hunters no ranged attack power, so it's left out).

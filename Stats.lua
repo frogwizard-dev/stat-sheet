@@ -140,9 +140,11 @@ local general = {
             if token ~= "ENERGY" or not GetPowerRegen then return false end
             return OneDecimal(GetPowerRegen()) .. "/s"
         end },
+        -- Normal running speed counts as a zero, so "Hide zeros" leaves it out until something changes it.
         { label = "Speed", get = function()
             local _, run = GetUnitSpeed("player")
-            return string.format("%d%%", Known(run) / (BASE_MOVEMENT_SPEED or 7) * 100 + 0.5)
+            local percent = math.floor(Known(run) / (BASE_MOVEMENT_SPEED or 7) * 100 + 0.5)
+            return string.format("%d%%", percent), percent == 100
         end, tip = function(tooltip)
             local _, run, _, swim = GetUnitSpeed("player")
             local base = BASE_MOVEMENT_SPEED or 7
@@ -607,16 +609,7 @@ end
 local ENEMY_DODGE = { [0] = 5.0, 5.5, 6.0, 6.5 }
 local SkillShort, HitNeeded = Tank.SkillShort, Tank.HitNeeded
 
--- Hands out shares of 100% in the game's order, none more than what's left: Take(share), Left().
-local function Shares()
-    local left = 100
-    local function Take(share)
-        share = math.max(0, math.min(left, share))
-        left = left - share
-        return share
-    end
-    return Take, function() return left end
-end
+local Shares = Tank.Shares -- shares of 100% handed out in the game's order: Take(share), Left()
 
 -- Where your auto-attacks go against an enemy `over` levels up, in the game's order (misses, dodges,
 -- glancing blows, crits, hits), as percentages, and `mult`: the share of paper DPS they add up to.
@@ -688,6 +681,36 @@ local function CapsSlot()
     return ns.Ranged() and (INVSLOT_RANGED or 18) or (INVSLOT_MAINHAND or 16)
 end
 
+-- Defense skill, out of your level x 5, shown with the rest of your defense. Short of that, enemies
+-- of your level hit and crit you a little more; above it (gear), Forever adds 0.04% avoidance per point.
+local defenseSkill = { label = "Defense skill", wide = true, get = function()
+    local current, maximum = DefenseSkill()
+    if not current then return false end
+    local note
+    if current < maximum then
+        note = string.format("%d short: enemies hit and crit you %s more", maximum - current,
+            Percent((maximum - current) * 0.04))
+    elseif current > maximum then
+        note = string.format("+%s avoidance, %s fewer crits taken", Percent((current - maximum) * 0.04),
+            Percent((current - maximum) * 0.04))
+    end
+    return SkillText(current, maximum), false, note, math.min(1, current / maximum)
+end, tip = function(tooltip)
+    local current = DefenseSkill()
+    Line(tooltip, "By enemy level:")
+    local level = UnitLevel("player")
+    for over = 0, 3 do
+        local crush = EnemyCrushChance(over, current)
+        Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
+            string.format("misses %.1f%%  crits %.1f%%%s", EnemyMissChance(over, current),
+                EnemyCritChance(over, current), crush > 0 and string.format("  crushes %.0f%%", crush) or ""))
+    end
+    Line(tooltip, " ")
+    Line(tooltip, "|cff8c8c8cCritical hits from creatures deal double damage; crushing blows deal 150%. "
+        .. "Rises as you take hits.|r")
+end }
+table.insert(defense.cells, 2, defenseSkill)
+
 local caps = {
     key = "caps", title = "Caps", colorKey = "Insights",
     cells = {
@@ -727,34 +750,6 @@ local caps = {
             Line(tooltip, " ")
             Line(tooltip, "|cff8c8c8cRises as you fight with this kind of weapon. Forever's own rules: "
                 .. "0.04% per point short of the enemy's defense (its level x 5).|r")
-        end },
-        -- Defense skill, out of your level x 5. Short of that, enemies of your level hit and crit
-        -- you a little more; above it (gear), Forever adds 0.04% avoidance per point.
-        { label = DEFENSE or "Defense", wide = true, get = function()
-            local current, maximum = DefenseSkill()
-            if not current then return false end
-            local note
-            if current < maximum then
-                note = string.format("%d short: enemies hit and crit you %s more", maximum - current,
-                    Percent((maximum - current) * 0.04))
-            elseif current > maximum then
-                note = string.format("+%s avoidance, %s fewer crits taken", Percent((current - maximum) * 0.04),
-                    Percent((current - maximum) * 0.04))
-            end
-            return SkillText(current, maximum), false, note, math.min(1, current / maximum)
-        end, tip = function(tooltip)
-            local current = DefenseSkill()
-            Line(tooltip, "By enemy level:")
-            local level = UnitLevel("player")
-            for over = 0, 3 do
-                local crush = EnemyCrushChance(over, current)
-                Line(tooltip, string.format("Level %d%s", level + over, over == 3 and " (raid boss)" or ""),
-                    string.format("misses %.1f%%  crits %.1f%%%s", EnemyMissChance(over, current),
-                        EnemyCritChance(over, current), crush > 0 and string.format("  crushes %.0f%%", crush) or ""))
-            end
-            Line(tooltip, " ")
-            Line(tooltip, "|cff8c8c8cCritical hits from creatures deal double damage; crushing blows deal 150%. "
-                .. "Rises as you take hits.|r")
         end },
         -- Hit against the hit that means never missing a same-level enemy (shots' as ranged).
         { label = "Hit Chance", wide = true, get = function()
