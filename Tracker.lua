@@ -33,6 +33,10 @@ local function Snapshot()
     Try("ap", function() return (Stats.MeleeAP()) end)
     Try("sp", function() return (Stats.BestSchool(GetSpellBonusDamage)) end)
     Try("dps", function() return Stats.PaperDPS() * Stats.SwingTable(0).mult end)
+    Try("rdps", function()
+        if not Stats.HasRangedWeapon() then return nil end
+        return Stats.RangedPaperDPS() * Stats.ShotTable(0).mult
+    end)
     Try("ehp", function()
         local health = Stats.Known(UnitHealthMax("player"))
         return health / (1 - Stats.ArmorReduction(Stats.ArmorNow()))
@@ -177,6 +181,58 @@ local function Settle()
     end
     pending = {}
     base = now
+    pcall(Record, now)
+end
+
+------------------------------------------------------------------------------
+-- Over time: a point each time real DPS, ranged DPS, spell power or effective health moves by 1%
+-- or more, or you level, kept between sessions per character for the Gear tab's graph.
+------------------------------------------------------------------------------
+
+local MAX_POINTS = 300
+local SERIES = { "dps", "rdps", "sp", "ehp" }
+
+local function HistoryKey()
+    return (UnitName("player") or "?") .. "-" .. (GetRealmName and GetRealmName() or "")
+end
+
+function Tracker.History()
+    local db = ns.db
+    if not (db and type(db.history) == "table") then return {} end
+    local key = HistoryKey()
+    db.history[key] = db.history[key] or {}
+    return db.history[key]
+end
+
+local function Moved(old, new)
+    if old == nil or new == nil then return new ~= nil and old == nil end
+    if old == 0 then return new ~= 0 end
+    return math.abs(new / old - 1) >= 0.01
+end
+
+local function Record(snapshot)
+    if not (snapshot and snapshot.level and snapshot.ehp) then return end
+    local points = Tracker.History()
+    local last = points[#points]
+    local changed = not last or last.lv ~= snapshot.level
+    for _, key in ipairs(SERIES) do
+        if last and Moved(last[key], snapshot[key]) then changed = true end
+    end
+    if not changed then return end
+    local point = { t = time(), lv = snapshot.level }
+    for _, key in ipairs(SERIES) do
+        if snapshot[key] then point[key] = math.floor(snapshot[key] * 10 + 0.5) / 10 end
+    end
+    points[#points + 1] = point
+    -- Full: thin the oldest half to every other point, so the whole span stays.
+    if #points > MAX_POINTS then
+        local thinned = {}
+        for i, kept in ipairs(points) do
+            if i > MAX_POINTS / 2 or i % 2 == 1 then thinned[#thinned + 1] = kept end
+        end
+        wipe(points)
+        for i, kept in ipairs(thinned) do points[i] = kept end
+    end
 end
 
 -- "just now", "4m ago", "1h ago".
@@ -207,13 +263,19 @@ local function Quiet()
     C_Timer.After(1.5, function()
         quietPending = false
         if InCombatLockdown() then return end
-        if not pending.slots and not pending.level and not waiting then base = Snapshot() end
+        if not pending.slots and not pending.level and not waiting then
+            base = Snapshot()
+            pcall(Record, base)
+        end
     end)
 end
 
 events:SetScript("OnEvent", function(_, event, slot)
     if event == "PLAYER_LOGIN" then
-        After("settle", 2, function() base = Snapshot() end)
+        After("settle", 2, function()
+            base = Snapshot()
+            pcall(Record, base)
+        end)
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
         pending.slots = pending.slots or {}
         pending.slots[slot] = true

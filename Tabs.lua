@@ -1217,6 +1217,31 @@ local castsFromFull = { kind = "entries", key = "casts", title = "Casts from ful
 
 local roleSwitch = { kind = "role" }
 
+-- Your pet: its health, damage and happiness as tiles under the "Pet" header, the rest of its rows
+-- under them (the rows the tiles show are skipped).
+local petCells = pet.cells
+local petTiles = { kind = "tiles", key = "pet", title = "Pet", colorKey = "Attack", tiles = {
+    { caption = function() return string.upper(UnitName("pet") or "Pet") end, colorKey = "Defense", get = function()
+        if not HasPet() then return false end
+        return Number(UnitHealthMax("pet")), false, string.format("health · level %d", Known(UnitLevel("pet")))
+    end },
+    { caption = "PET DPS", colorKey = "Attack", get = function()
+        if not HasPet() then return false end
+        local low, high = UnitDamage("pet")
+        local speed = Known((UnitAttackSpeed("pet")))
+        return string.format("%.1f", (Known(low) + Known(high)) / 2 / speed), false,
+            string.format("%d-%d every %.1fs", Known(low), Known(high), speed)
+    end, tip = petCells[3].tip },
+    { caption = "HAPPINESS", colorKey = "Insights", get = function()
+        if not HasPet() then return false end
+        local happiness, damage = FrogLib.Unit.PetHappiness()
+        if not happiness then return false end
+        return HAPPINESS[happiness] or tostring(happiness), false, damage and string.format("deals %d%% damage", damage) or nil
+    end, tip = petCells[2].tip },
+} }
+local petRows = { kind = "section", section = pet, noHeader = true,
+    skip = { [petCells[1]] = true, [petCells[2]] = true, [petCells[3]] = true } }
+
 -- Offense follows the switch: spells first as a caster, the ranged weapon first as ranged, the
 -- melee weapon first otherwise. Each leads with its own numbers, then its caps and where the
 -- damage goes; the other kinds of attack come after, for reference.
@@ -1239,7 +1264,7 @@ local function OffenseBlocks()
             spellsGo,
             castsFromFull,
             { kind = "section", section = Section.ranged },
-            { kind = "section", section = pet },
+            petTiles, petRows,
             { kind = "section", section = Section.melee },
         }
     end
@@ -1251,7 +1276,7 @@ local function OffenseBlocks()
             { kind = "section", section = Section.ranged, skip = CapsSkip({ [rangedWeapon] = true }) },
             caps,
             shotsGo,
-            { kind = "section", section = pet },
+            petTiles, petRows,
             { kind = "section", section = Section.melee },
             { kind = "section", section = Section.spell },
         }
@@ -1267,9 +1292,123 @@ local function OffenseBlocks()
         { kind = "section", section = rage },
         { kind = "section", section = Section.ranged },
         { kind = "section", section = Section.spell },
-        { kind = "section", section = pet },
+        petTiles, petRows,
     }
 end
+
+------------------------------------------------------------------------------
+-- Weakest pieces: your lowest item level gear (and empty slots) first, where an upgrade does most
+------------------------------------------------------------------------------
+
+local UPGRADE_SLOTS = {
+    { 1, "Head" }, { 2, "Neck" }, { 3, "Shoulders" }, { 15, "Back" }, { 5, "Chest" }, { 9, "Wrist" },
+    { 10, "Hands" }, { 6, "Waist" }, { 7, "Legs" }, { 8, "Feet" }, { 11, "Ring" }, { 12, "Ring" },
+    { 13, "Trinket" }, { 14, "Trinket" }, { 16, "Main hand" }, { 17, "Off hand" }, { 18, "Ranged" },
+}
+local SLOT_NAMES = { [1] = "HeadSlot", [2] = "NeckSlot", [3] = "ShoulderSlot", [15] = "BackSlot", [5] = "ChestSlot",
+    [9] = "WristSlot", [10] = "HandsSlot", [6] = "WaistSlot", [7] = "LegsSlot", [8] = "FeetSlot", [11] = "Finger0Slot",
+    [12] = "Finger1Slot", [13] = "Trinket0Slot", [14] = "Trinket1Slot", [16] = "MainHandSlot",
+    [17] = "SecondaryHandSlot", [18] = "RangedSlot" }
+local QUALITY_NAMES = { [0] = "grey", [1] = "white", [2] = "green", [3] = "blue", [4] = "purple", [5] = "orange" }
+
+local function TwoHanded()
+    local link = GetInventoryItemLink("player", INVSLOT_MAINHAND or 16)
+    return link and select(4, C_Item.GetItemInfoInstant(link)) == "INVTYPE_2HWEAPON"
+end
+
+-- One card for every empty slot, then your four lowest item level pieces.
+local function WeakestEntries()
+    local pieces, empty = {}, {}
+    local emptyIcon
+    local twoHand = TwoHanded()
+    for _, slot in ipairs(UPGRADE_SLOTS) do
+        local id = slot[1]
+        if not (id == 17 and twoHand) then
+            local link = GetInventoryItemLink("player", id)
+            if link then
+                local name, _, quality, baseLevel = C_Item.GetItemInfo(link)
+                local itemLevel = C_Item.GetDetailedItemLevelInfo and C_Item.GetDetailedItemLevelInfo(link) or baseLevel
+                if name and itemLevel then
+                    pieces[#pieces + 1] = { slot = slot[2], link = link, name = name, quality = quality or 1,
+                        level = itemLevel, icon = GetInventoryItemTexture("player", id) }
+                end
+            else
+                empty[#empty + 1] = slot[2]
+                if not emptyIcon then emptyIcon = select(2, GetInventorySlotInfo(SLOT_NAMES[id])) end
+            end
+        end
+    end
+    -- By item level, then by quality.
+    table.sort(pieces, function(first, second)
+        if first.level ~= second.level then return first.level < second.level end
+        return (first.quality or 0) < (second.quality or 0)
+    end)
+    local entries = {}
+    if #empty > 0 then
+        entries[1] = { icon = emptyIcon, title = #empty == 1 and "1 empty slot" or (#empty .. " empty slots"),
+            color = { 1, 0.82, 0 }, right = "anything helps", lines = { { text = table.concat(empty, ", "), dim = true } } }
+    end
+    for i = 1, math.min(4, #pieces) do
+        local piece = pieces[i]
+        local color
+        if C_Item.GetItemQualityColor then
+            local ok, r, g, b = pcall(C_Item.GetItemQualityColor, piece.quality)
+            if ok and r then color = { r, g, b } end
+        end
+        entries[#entries + 1] = { icon = piece.icon, title = piece.name, color = color,
+            right = string.format("item level %d", piece.level),
+            lines = { { text = string.format("%s · %s", piece.slot, QUALITY_NAMES[piece.quality] or ""), dim = true } } }
+    end
+    return entries
+end
+
+local weakest = { kind = "entries", key = "weakest", title = "Weakest pieces", colorKey = "Gear",
+    items = function()
+        if ns.db.sections.weakest == false then return {} end
+        return WeakestEntries()
+    end, empty = "Nothing to show.", hideEmpty = true }
+
+------------------------------------------------------------------------------
+-- Over time: real DPS (or ranged DPS, or spell power, by the switch) and effective health from
+-- the history Tracker.lua keeps
+------------------------------------------------------------------------------
+
+local function HistorySeries()
+    if ns.db.sections.history == false then return {} end
+    local points = ns.Tracker.History()
+    if #points < 2 then return {} end
+    local key, label, format
+    if Caster() then
+        key, label, format = "sp", "Spell power", function(value) return value and Number(math.floor(value)) or "-" end
+    elseif Ranged() then
+        key, label, format = "rdps", "Ranged DPS", function(value) return value and string.format("%.1f", value) or "-" end
+    else
+        key, label, format = "dps", "Real DPS", function(value) return value and string.format("%.1f", value) or "-" end
+    end
+    local series = {}
+    local function Add(seriesKey, seriesLabel, colorKey, Format)
+        local values = {}
+        for _, point in ipairs(points) do
+            if point[seriesKey] then values[#values + 1] = point[seriesKey] end
+        end
+        if #values >= 2 then
+            series[#series + 1] = { label = seriesLabel, colorKey = colorKey, values = values, format = Format }
+        end
+    end
+    Add(key, label, Caster() and "Secondary Stats" or "Attack", format)
+    Add("ehp", "Effective health", "Defense", function(value) return value and Number(math.floor(value + 0.5)) or "-" end)
+    return series
+end
+
+local history = { kind = "graph", key = "history", title = "Over time", colorKey = "Attributes",
+    series = HistorySeries, empty = "Builds up as your gear and level change: a point each time your damage or health moves.",
+    foot = function()
+        local points = ns.Tracker.History()
+        if #points < 2 then return nil end
+        local first = points[1]
+        return string.format("Since level %d, %s: %d changes.", first.lv or 0,
+            date("%d %b %Y", first.t or time()), #points)
+    end }
 
 ------------------------------------------------------------------------------
 -- The tabs
@@ -1357,8 +1496,10 @@ ns.Tabs = {
               foot = "Enchants and buffs aren't included.", chips = function()
                 return Stats.GearSummary((Stats.GearTotals()))
             end },
+            weakest,
             { kind = "section", section = supplies },
             { kind = "changes", key = "changes", title = "Since you logged in", colorKey = "Attributes", limit = 8 },
+            history,
             { kind = "section", section = professions },
         },
     },

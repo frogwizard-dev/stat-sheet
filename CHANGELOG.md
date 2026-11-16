@@ -16,6 +16,10 @@
 
 ### Improvements
 
+- **Weakest pieces** on the Gear tab: your empty slots in one card, then the four lowest item level pieces you wear, where an upgrade does the most.
+- **Over time** on the Gear tab: line graphs of your real DPS (ranged DPS for hunters shown as ranged, spell power for casters) and effective health, from the first time you log in with this version, kept per character. A point goes in each time one moves by 1% or more, or you level.
+- **Pet**: its health, damage and happiness are big numbers under the Pet header, like the other tabs' (happiness's tooltip still has loyalty, training points and food), with its other stats underneath.
+- Both new blocks can be hidden in the settings.
 - **Weapon skill past the cap** (racials, Edgemaster's Handguards) now counts: fewer misses and dodges, most of all against bosses, following the curve of Forever's own hit table (a 305 sword misses a raid boss 5.4% of the time, not 9%). The weapon skill row says so. From FrogLib 1.11.0.
 - **Before you equip, for hunters**: a bow, gun, crossbow or thrown weapon shows the **Ranged DPS** it would give you, and so does any item's Agility or attack power; the melee line is called Melee DPS. A **wand** shows its Wand DPS.
 - Before you equip: armor and weapons your class can never use (plate for a mage, axes for a rogue) get no comparison. Mail and plate are still compared for the classes that learn them at 40.

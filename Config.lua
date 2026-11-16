@@ -17,9 +17,10 @@ ns.defaults = {
     compareBoth = true, -- a ring or trinket: compare with both you wear (false: the weaker only)
     collapsed = {},     -- blocks folded away by clicking their header
     pins = {},          -- rows shift-clicked into "Pinned" on the Overview, as "<section>:<label>"
+    history = {},       -- per character ("Name-Realm"): points for "Over time" on the Gear tab (Tracker.lua)
     sections = { general = true, attributes = true, caps = true, melee = true, ranged = true, spell = true,
         defense = true, armorLevels = true, tanking = true, rage = true, supplies = true,
-        ready = true, pet = true, measured = true, professions = true },
+        ready = true, pet = true, measured = true, professions = true, weakest = true, history = true },
 }
 
 local CopyDefaults = FrogLib.Util.CopyDefaults
@@ -71,8 +72,10 @@ local SECTION_LABELS = {
     { "tanking", "Tanking a raid boss: threat, crushing blows, crits, block value (Defense)" },
     { "armorLevels", "Armor by enemy level (Defense)" },
     { "measured", "Measured in your fights: what enemies' swings really did (Defense)" },
+    { "weakest", "Weakest pieces: where to look for an upgrade (Gear)" },
     { "supplies", "Ammo, weapon buffs & enchants (Gear)" },
     { "professions", "Professions (Gear)" },
+    { "history", "Over time: your damage and health as you level (Gear)" },
 }
 
 -- Defense skill moved from Caps (Overview) to Defense (0.6.0): a pin on it follows it there.

@@ -428,6 +428,18 @@ function MAKERS.roleBar(self)
     return bar
 end
 
+-- A small line graph: a name and its change above, the line in a shaded box.
+function MAKERS.graph(self)
+    local graph = CreateFrame("Frame", nil, self.content)
+    graph.label = Text(graph)
+    graph.label:SetPoint("TOPLEFT", 0, 0)
+    graph.right = Text(graph)
+    graph.right:SetPoint("TOPRIGHT", 0, 0)
+    graph.box = graph:CreateTexture(nil, "BACKGROUND")
+    graph.lines = {}
+    return graph
+end
+
 function MAKERS.foot(self)
     local text = self.content:CreateFontString(nil, "OVERLAY")
     text:SetJustifyH("LEFT")
@@ -687,12 +699,20 @@ end
 
 function LAYOUTS.tiles(self, block, y, context)
     local look = context.look
+    -- A titled row of tiles heads a block of its own (and folds it, with block.key), and goes
+    -- with the section of that key in the settings.
+    if block.key and ns.db.sections[block.key] == false then return y end
     local items = {}
     for _, tile in ipairs(block.tiles) do
         local reading = Read(tile, "caption")
         if reading.text then items[#items + 1] = tile end
     end
     if #items == 0 then return y end
+    if block.title then
+        local collapsed
+        y, collapsed = self:Header(context, y, block.key, block.title, block.colorKey)
+        if collapsed then return y - BLOCK_GAP end
+    end
     -- Narrow: two to a row (a row with one left over gives it the whole width).
     local perRow = (context.narrow and #items > 2) and 2 or #items
     local captionSize = context.size + look.sizes.caption
@@ -838,9 +858,14 @@ function LAYOUTS.section(self, block, y, context)
     end
     if #visible == 0 then return y end
     local r, g, b = SectionColor(section.colorKey)
-    local collapsed
-    y, collapsed = self:Header(context, y, section.key, section.title, section.colorKey)
-    if collapsed then return y - BLOCK_GAP end
+    if block.noHeader then
+        -- Under a titled row of tiles, which has the header (and folds this away with it).
+        if ns.db.collapsed[section.key] then return y end
+    else
+        local collapsed
+        y, collapsed = self:Header(context, y, section.key, section.title, section.colorKey)
+        if collapsed then return y - BLOCK_GAP end
+    end
 
     -- Which cells take a whole row: their own say, all of them when narrow (rows of two stack into
     -- one column), and a half-row cell with no partner (the next is a whole row, or there's none),
@@ -1271,6 +1296,7 @@ end
 -- Rows of small cards from a block's items() (casts from full mana per spell).
 function LAYOUTS.entries(self, block, y, context)
     local items = Rows(block.key, block.items)
+    if (not items or #items == 0) and block.hideEmpty then return y end
     local collapsed
     y, collapsed = self:Header(context, y, block.key, block.title, block.colorKey)
     if collapsed then return y - BLOCK_GAP end
@@ -1285,6 +1311,80 @@ function LAYOUTS.entries(self, block, y, context)
         y = self:Entry(context, y, card)
     end
     return y - BLOCK_GAP + 5
+end
+
+-- Line graphs over time: block.series() gives { label, colorKey, values = { numbers }, format }
+-- per graph (format turns a value into text); block.foot() a line under them all.
+local GRAPH_HEIGHT = 34
+
+function LAYOUTS.graph(self, block, y, context)
+    if ns.db.sections[block.key] == false then return y end
+    local series = Rows(block.key, block.series)
+    if not series then return y end
+    local collapsed
+    y, collapsed = self:Header(context, y, block.key, block.title, block.colorKey)
+    if collapsed then return y - BLOCK_GAP end
+    if #series == 0 then
+        return self:Foot(context, y, block.empty or "Nothing yet.") - BLOCK_GAP
+    end
+    local look = context.look
+    local textSize = context.size + look.sizes.body
+    for _, one in ipairs(series) do
+        local graph = self:Get("graph")
+        graph:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD, y)
+        graph:SetSize(context.inner, textSize + 4 + GRAPH_HEIGHT)
+        local r, g, b = SectionColor(one.colorKey)
+        local values = one.values
+        local first, last = values[1], values[#values]
+        SetFont(graph.label, context.fonts.body, textSize)
+        SetFont(graph.right, context.fonts.bold, textSize)
+        graph.label:SetText(one.label)
+        SetColor(graph.label, look.label)
+        local change = ""
+        if first and first ~= 0 and last then
+            local percent = (last / first - 1) * 100
+            change = string.format("  |cff%s%+.0f%%|r", percent >= 0 and "73cc78" or "de6b61", percent)
+        end
+        graph.right:SetText(one.format(first) .. "  >  " .. one.format(last) .. change)
+        graph.right:SetTextColor(r, g, b)
+        local top = textSize + 4
+        graph.box:ClearAllPoints()
+        graph.box:SetPoint("TOPLEFT", 0, -top)
+        graph.box:SetSize(context.inner, GRAPH_HEIGHT)
+        graph.box:SetColorTexture(unpack(look.cardBg))
+        local low, high = math.huge, -math.huge
+        for _, value in ipairs(values) do
+            low, high = math.min(low, value), math.max(high, value)
+        end
+        if high - low < 1e-6 then low, high = low - 1, high + 1 end
+        local count = #values
+        local function Point(i)
+            local x = count > 1 and (i - 1) / (count - 1) * (context.inner - 4) + 2 or context.inner / 2
+            local fraction = (values[i] - low) / (high - low)
+            return x, -(top + 3 + (1 - fraction) * (GRAPH_HEIGHT - 6))
+        end
+        local used = 0
+        for i = 2, count do
+            used = used + 1
+            local line = graph.lines[used]
+            if not line then
+                line = graph:CreateLine(nil, "ARTWORK")
+                graph.lines[used] = line
+            end
+            local x1, y1 = Point(i - 1)
+            local x2, y2 = Point(i)
+            line:SetStartPoint("TOPLEFT", graph, x1, y1)
+            line:SetEndPoint("TOPLEFT", graph, x2, y2)
+            line:SetThickness(1.5)
+            line:SetColorTexture(r, g, b, 0.95)
+            line:Show()
+        end
+        for i = used + 1, #graph.lines do graph.lines[i]:Hide() end
+        y = y - (top + GRAPH_HEIGHT) - 8
+    end
+    local foot = block.foot and block.foot()
+    if foot then y = self:Foot(context, y, foot) end
+    return y - BLOCK_GAP + 4
 end
 
 -- The switch on a line of its own, for anyone who has a choice: "Show as", and the buttons as one
