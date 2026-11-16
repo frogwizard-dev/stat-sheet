@@ -52,7 +52,8 @@ local function Changes(newLink, old, slot)
     end
 
     Add("Spell power", diff.sp, "%+d")
-    if diff.heal > diff.sp then Add("Healing", diff.heal, "%+d") end
+    -- Healing gets its own line when it moves differently from spell power (+healing gear).
+    if diff.heal ~= diff.sp then Add("Healing", diff.heal, "%+d") end
     if Stats.UsesMana() then
         local intellectNow, intellectNew = StatAfter(4, diff.int)
         local first = INTELLECT_BREAK or 20
@@ -74,9 +75,17 @@ end
 local function OnTooltip(tooltip)
     if not (ns.db and ns.db.compare) then return end
     if tooltip ~= GameTooltip and tooltip ~= ItemRefTooltip then return end
+    local added = false
     local ok = pcall(function()
         local _, link = tooltip:GetItem()
-        if not link or C_Item.IsEquippedItem(link) then return end
+        if not link then return end
+        -- Not cached yet: its stats would read as nothing, and the old item as all loss.
+        if not C_Item.GetItemInfo(link) then return end
+        -- Hovering one of your own slots on the character sheet.
+        local owner = tooltip:GetOwner()
+        local ownerName = owner and owner.GetName and owner:GetName()
+        if type(ownerName) == "string" and ownerName:match("^Character.+Slot$") then return end
+        local equipped = C_Item.IsEquippedItem(link)
         local replacements
         if ns.db.compareBoth == false then
             local slot, old, names = Tank.Replaced(link)
@@ -86,6 +95,10 @@ local function OnTooltip(tooltip)
             replacements = Tank.ReplacedEach(link)
         end
         if #replacements == 0 then return end
+        -- A copy of something you wear: only worth comparing when it could go in the other ring
+        -- or trinket slot instead.
+        if equipped and #replacements < 2 then return end
+        added = true
         -- The same item in both slots: say which is which.
         local same = #replacements > 1 and replacements[1].names[1] == replacements[2].names[1]
         for i, replacement in ipairs(replacements) do
@@ -103,7 +116,7 @@ local function OnTooltip(tooltip)
             end
         end
     end)
-    if ok then tooltip:Show() end
+    if ok and added then tooltip:Show() end
 end
 
 ns.CompareChanges = Changes -- for the test harness

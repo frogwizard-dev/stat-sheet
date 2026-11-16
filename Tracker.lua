@@ -41,6 +41,9 @@ local function Snapshot()
     if ok and current then snapshot.weapon, snapshot.weaponName = current, name end
     local okDefense, defense = pcall(Stats.DefenseSkill)
     if okDefense and defense then snapshot.defense = defense end
+    -- Defense without gear's bonus: only this rising is a skill-up (a +Defense shield isn't).
+    local okBase, defenseBase = pcall(function() return Stats.Known((UnitDefenseSkill("player"))) end)
+    if okBase and type(defenseBase) == "number" then snapshot.defenseBase = defenseBase end
     for slot = 1, SLOTS do snapshot.links[slot] = GetInventoryItemLink("player", slot) end
     snapshot.level = UnitLevel("player")
     return snapshot
@@ -112,6 +115,15 @@ local function GearChange(now)
         if old and old ~= new then took[#took + 1] = old end
     end
     if #put == 0 and #took == 0 then return nil end
+    -- The same items in different slots (a ring moved to the other finger): nothing changed.
+    if #put == #took then
+        local moved = {}
+        for _, link in ipairs(took) do moved[link] = (moved[link] or 0) + 1 end
+        for _, link in ipairs(put) do moved[link] = (moved[link] or 0) - 1 end
+        local same = true
+        for _, count in pairs(moved) do if count ~= 0 then same = false end end
+        if same then return nil end
+    end
     local change = { deltas = Deltas(base, now), effects = Effects(base, now) }
     if #put > 0 then
         change.title, change.quality, change.icon = ItemInfo(put[1])
@@ -124,8 +136,14 @@ local function GearChange(now)
     return change
 end
 
--- Logs what's pending against the snapshot, then takes a new one.
+-- Logs what's pending against the snapshot, then takes a new one. In combat it waits for combat to
+-- end: some numbers are hidden there, and skill-ups made during a fight come out as one card.
+local waiting = false
 local function Settle()
+    if InCombatLockdown() then
+        waiting = true
+        return
+    end
     local now = Snapshot()
     if base then
         if pending.level then
@@ -135,14 +153,16 @@ local function Settle()
             local change = GearChange(now)
             if change then Add(change) end
         end
-        if base.weapon and now.weapon and base.weaponName == now.weaponName and now.weapon > base.weapon then
+        if not pending.slots and base.weapon and now.weapon and base.weaponName == now.weaponName
+            and now.weapon > base.weapon then
             local gain = (now.weapon - base.weapon) * 0.04
             Add({ title = string.format("%s %d", now.weaponName, now.weapon),
                 icon = GetInventoryItemTexture("player", INVSLOT_MAINHAND or 16),
                 sub = string.format("up from %d", base.weapon),
                 effects = { { "Misses and dodges", "-" .. Stats.Percent(gain), true }, { "Crits", "+" .. Stats.Percent(gain), true } } })
         end
-        if base.defense and now.defense and now.defense > base.defense then
+        if base.defenseBase and now.defenseBase and now.defenseBase > base.defenseBase
+            and base.defense and now.defense and now.defense > base.defense then
             local gain = (now.defense - base.defense) * 0.04
             Add({ title = string.format("Defense %d", now.defense), icon = "Interface\\Icons\\Ability_Defend",
                 sub = string.format("up from %d", base.defense),
@@ -181,7 +201,7 @@ local function Quiet()
     C_Timer.After(1.5, function()
         quietPending = false
         if InCombatLockdown() then return end
-        if not pending.slots and not pending.level then base = Snapshot() end
+        if not pending.slots and not pending.level and not waiting then base = Snapshot() end
     end)
 end
 
@@ -196,6 +216,9 @@ events:SetScript("OnEvent", function(_, event, slot)
         pending.level = true
         After("settle", 1.5, Settle)
     elseif event == "SKILL_LINES_CHANGED" then
+        After("settle", 0.5, Settle)
+    elseif event == "PLAYER_REGEN_ENABLED" and waiting then
+        waiting = false
         After("settle", 0.5, Settle)
     elseif not pending.slots and not pending.level then
         Quiet()

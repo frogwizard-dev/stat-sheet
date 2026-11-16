@@ -207,7 +207,15 @@ local function OursDump()
         for _, cell in ipairs(section.cells) do
             local label = type(cell.label) == "function" and select(2, pcall(cell.label)) or cell.label
             local ok, text, zero = pcall(cell.get)
-            local row = { section = section.key, label = Clean(label, 0), text = ok and Clean(text, 0) or ("<error> " .. tostring(text)), zero = zero }
+            local value
+            if not ok then
+                value = "<error> " .. tostring(text)
+            elseif not text then
+                value = "<not shown>"
+            else
+                value = Clean(text, 0)
+            end
+            local row = { section = section.key, label = Clean(label, 0), text = value, zero = zero }
             if cell.tip then
                 local collector = Collector()
                 local okTip, err = pcall(cell.tip, collector)

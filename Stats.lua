@@ -129,7 +129,7 @@ local general = {
     key = "general", title = "General", colorKey = "General",
     cells = {
         -- Rage or energy while it's the bar in use (a druid in bear or cat form).
-        { label = function() return select(2, DisplayPower()) end, get = function()
+        { label = function() return select(2, DisplayPower()) end, pinKey = "general:power", get = function()
             local powerType = DisplayPower()
             if powerType == 0 then return false end
             return Number(UnitPowerMax("player", powerType))
@@ -183,7 +183,11 @@ end
 -- PaperDollFrame_SetStatTooltip2), with the client's functions it uses.
 local function Gives(statIndex, stat)
     local class, gives = Class(), {}
-    local function Add(template, value) gives[#gives + 1] = string.format(template, value) end
+    -- An effect that rounds to nothing ("+0 RAP", "+0.0% crit") is left out.
+    local function Add(template, value)
+        local text = string.format(template, value)
+        if not text:match("^%+0%.?0*%%? ") then gives[#gives + 1] = text end
+    end
     if statIndex == 1 then
         Add("+%d AP", StatAP(1, stat) or stat * (STR_AP[class] or 1))
         -- Each 20 Strength adds 1 to a shield's block value.
@@ -281,17 +285,17 @@ end
 local function GlancingChance(over, skill)
     if GetGlancingBlowChance then
         local ok, chance = pcall(GetGlancingBlowChance, skill, EnemyDefense(over))
-        chance = ok and Known(chance)
+        chance = ok and chance ~= nil and Known(chance)
         if chance then return math.max(0, math.min(100, chance * 100)) end
     end
     skill = math.min(UnitLevel("player") * SKILL_PER_LEVEL, skill)
-    return math.max(-100, math.min(100, (0.02 * SkillGap(over, skill) + 0.1) * 100))
+    return math.min(100, (0.02 * SkillGap(over, skill) + 0.1) * 100)
 end
 
 local function GlancingPenalty(over, skill)
     if GetGlancingBlowPenalty then
         local ok, penalty = pcall(GetGlancingBlowPenalty, skill, EnemyDefense(over))
-        penalty = ok and Known(penalty)
+        penalty = ok and penalty ~= nil and Known(penalty)
         if penalty then return math.max(0, math.min(100, penalty * 100)) end
     end
     local gap = SkillGap(over, skill)
@@ -372,7 +376,8 @@ local melee = {
         end, tip = function(tooltip)
             local _, offSpeed = UnitAttackSpeed("player")
             local _, _, low, high = UnitDamage("player")
-            WeaponTip(tooltip, low, high, offSpeed, (MeleeAP()))
+            -- The off hand gets half the attack power bonus.
+            WeaponTip(tooltip, low, high, offSpeed, (MeleeAP()) / 2)
         end },
         { label = "Attack Power", wide = true, get = function() return APText(MeleeAP()) end,
           tip = function(tooltip)
@@ -410,22 +415,28 @@ local function RangedHit()
     return Known(GetRangedHitModifier() or 0)
 end
 
+-- A wand: spell damage, so ranged attack power does nothing for it.
+local function HasWand()
+    local id = GetInventoryItemID("player", INVSLOT_RANGED or 18)
+    return id and select(7, C_Item.GetItemInfoInstant(id)) == Enum.ItemWeaponSubclass.Wand or false
+end
+
 local ranged = {
     key = "ranged", title = "Ranged", colorKey = "Attack",
     show = HasRangedWeapon,
     cells = {
-        { label = function()
-            local id = GetInventoryItemID("player", INVSLOT_RANGED or 18)
-            local subclass = id and select(7, C_Item.GetItemInfoInstant(id))
-            return subclass == Enum.ItemWeaponSubclass.Wand and "Wand" or "Ranged"
-        end, wide = true, get = function()
+        { label = function() return HasWand() and "Wand" or "Ranged" end, pinKey = "ranged:weapon",
+          wide = true, get = function()
             local speed, low, high = UnitRangedDamage("player")
             return WeaponText(low, high, speed)
         end, tip = function(tooltip)
             local speed, low, high = UnitRangedDamage("player")
-            WeaponTip(tooltip, low, high, speed, (RangedAP()))
+            WeaponTip(tooltip, low, high, speed, not HasWand() and (RangedAP()) or nil)
         end },
-        { label = "Attack Power", wide = true, get = function() return APText(RangedAP()) end },
+        { label = "Attack Power", wide = true, get = function()
+            if HasWand() then return false end
+            return APText(RangedAP())
+        end },
         { label = "Crit", get = function() return Percent(GetRangedCritChance()) end },
         { label = "Hit", get = function()
             local hit = RangedHit()
@@ -545,8 +556,10 @@ local spell = {
 -- The share of a physical hit armor takes off, against an enemy of your level (plus `over`): FrogLib.Tank.
 local ArmorReduction = Tank.ArmorReduction
 
+-- Spell schools' short names and colours, here and in "Resisted (boss)" (Tabs.lua).
 local RESISTS = { { 2, "Fire", "ff8040" }, { 3, "Nat", "4cff4c" }, { 4, "Frost", "80d0ff" },
     { 5, "Shad", "b080ff" }, { 6, "Arc", "ff80ff" } }
+ns.RESISTS = RESISTS
 
 local defense = {
     key = "defense", title = "Defense", colorKey = "Defense",
@@ -666,7 +679,7 @@ local IncomingTable = Tank.IncomingTable
 local SPELL_MISS = { [0] = 4, 5, 6, 17 }
 local function SpellMiss(over)
     local hit = GetSpellHitModifier and Known(GetSpellHitModifier() or 0) or 0
-    return math.max(0, SPELL_MISS[over] - hit)
+    return math.max(1, SPELL_MISS[over] - hit) -- 1% always gets resisted
 end
 
 ------------------------------------------------------------------------------
@@ -719,7 +732,7 @@ local caps = {
         { label = function()
             local _, _, name = WeaponSkill(CapsSlot())
             return name or "Weapon Skill"
-        end, wide = true, get = function()
+        end, pinKey = "caps:weapon", wide = true, get = function()
             local current, maximum = WeaponSkill(CapsSlot())
             if not current then return false end
             local gap = SkillGap(0, current)

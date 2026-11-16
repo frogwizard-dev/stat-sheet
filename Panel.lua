@@ -36,7 +36,7 @@ end
 local LOOKS = {
     ellesmere = {
         text = { 0.90, 0.91, 0.92 }, label = { 0.65, 0.69, 0.72 }, note = { 0.60, 0.64, 0.67 },
-        caption = { 0.55, 0.58, 0.62 }, colourValues = true, headerLines = true,
+        caption = { 0.55, 0.58, 0.62 }, colourValues = true,
         rowShade = { 1, 1, 1, 0.03 }, accent = true, switchEdge = { 0.22, 0.26, 0.30, 1 },
         cardBg = { 0.086, 0.106, 0.125, 1 }, cardEdge = { 0.137, 0.165, 0.192, 1 },
         track = { 0.137, 0.165, 0.192, 1 }, tabIdle = { 0.55, 0.58, 0.62 },
@@ -331,7 +331,6 @@ function MAKERS.header(self)
     header.bg = header:CreateTexture(nil, "BACKGROUND")
     header.bg:SetAllPoints()
     header.title = Text(header)
-    header.left = header:CreateTexture(nil, "ARTWORK")
     header.right = header:CreateTexture(nil, "ARTWORK")
     header.arrow = header:CreateTexture(nil, "OVERLAY")
     header.arrow:SetTexture(FOLD_ARROW)
@@ -535,12 +534,12 @@ end
 -- 12.x's SetGradient takes colour objects; VERTICAL runs from the bottom (first) to the top.
 function Panel:PaintFades(look)
     if self.fadeLook == look then return end
-    self.fadeLook = look
     local fade = look.fade
     local solid, clear = CreateColor(fade[1], fade[2], fade[3], fade[4]), CreateColor(fade[1], fade[2], fade[3], 0)
     for _, texture in ipairs({ self.fadeTop, self.fadeBottom }) do texture:SetColorTexture(1, 1, 1, 1) end
     self.fadeTop:SetGradient("VERTICAL", clear, solid)
     self.fadeBottom:SetGradient("VERTICAL", solid, clear)
+    self.fadeLook = look
 end
 
 function Panel:PlaceThumb()
@@ -553,7 +552,8 @@ function Panel:PlaceThumb()
         self.fadeBottom:Hide()
         return
     end
-    local position = scroll:GetVerticalScroll()
+    local position = math.min(scroll:GetVerticalScroll(), range)
+    if position ~= scroll:GetVerticalScroll() then scroll:SetVerticalScroll(position) end
     self.fadeTop:SetShown(position > 1)
     self.fadeBottom:SetShown(position < range - 1)
     local height = scroll:GetHeight()
@@ -580,12 +580,24 @@ function Panel:LayTabs(context)
     local classR, classG, classB = FrogLib.Color.Class(class)
     if not classR then classR, classG, classB = 1, 0.82, 0 end
     local height = context.size + 14
+    -- Room for the row: tighter padding, then smaller text, until all the tabs fit.
+    local room = (frame:GetWidth() or 0) - 2 * (PAD - 4)
+    local size, pad = context.size + look.sizes.tab, 14
+    for _ = 1, 8 do
+        local total = 0
+        for i, button in ipairs(self.tabs) do
+            local tab = ns.Tabs[i]
+            SetFont(button.text, tab == current and context.fonts.bold or context.fonts.body, size)
+            button.text:SetText(tab.title)
+            total = total + button.text:GetStringWidth() + pad
+        end
+        if room <= 0 or total <= room then break end
+        if pad > 6 then pad = pad - 4 else size = size - 1 end
+    end
     local x = PAD - 4
     for i, button in ipairs(self.tabs) do
         local tab = ns.Tabs[i]
-        SetFont(button.text, tab == current and context.fonts.bold or context.fonts.body, context.size + look.sizes.tab)
-        button.text:SetText(tab.title)
-        local width = button.text:GetStringWidth() + 14
+        local width = button.text:GetStringWidth() + pad
         button:ClearAllPoints()
         button:SetPoint("TOPLEFT", frame, "TOPLEFT", x, -4)
         button:SetSize(width, height)
@@ -643,7 +655,6 @@ function Panel:Header(context, y, key, title, colorKey)
         arrow:SetVertexColor(1, 0.82, 0)
         header.bg:SetAtlas(look.headerAtlas)
         header.bg:Show()
-        header.left:Hide()
         header.right:Hide()
         header.title:SetTextColor(1, 1, 1)
     else
@@ -652,7 +663,6 @@ function Panel:Header(context, y, key, title, colorKey)
         arrow:SetVertexColor(r, g, b, 0.9)
         header.title:SetPoint("LEFT", arrow, "RIGHT", 1, 0)
         header.bg:Hide()
-        header.left:Hide()
         header.title:SetTextColor(r, g, b)
         header.right:ClearAllPoints()
         header.right:SetPoint("LEFT", header.title, "RIGHT", 8, 0)
@@ -664,14 +674,14 @@ function Panel:Header(context, y, key, title, colorKey)
     return y - height - 4, collapsed
 end
 
-function Panel:Foot(context, y, text, x)
+function Panel:Foot(context, y, text)
     local foot = self:Get("foot")
     SetFont(foot, context.fonts.note, context.size + context.look.sizes.note - 1)
     SetColor(foot, context.look.note)
     foot:SetWidth(context.inner)
     foot:SetWordWrap(true)
     foot:SetText(text)
-    foot:SetPoint("TOPLEFT", self.content, "TOPLEFT", x or PAD, y)
+    foot:SetPoint("TOPLEFT", self.content, "TOPLEFT", PAD, y)
     return y - foot:GetStringHeight() - 4
 end
 
@@ -832,16 +842,31 @@ function LAYOUTS.section(self, block, y, context)
     y, collapsed = self:Header(context, y, section.key, section.title, section.colorKey)
     if collapsed then return y - BLOCK_GAP end
 
+    -- Which cells take a whole row: their own say, all of them when narrow (rows of two stack into
+    -- one column), and a half-row cell with no partner (the next is a whole row, or there's none),
+    -- so it doesn't leave an empty half beside it.
+    local wides, half = {}, nil
+    for i, cell in ipairs(visible) do
+        local wide = cell.wide
+        if type(wide) == "function" then wide = wide() end
+        wides[i] = (context.narrow or wide) and true or false
+        if wides[i] then
+            if half then wides[half], half = true, nil end
+        elseif half then
+            half = nil
+        else
+            half = i
+        end
+    end
+    if half then wides[half] = true end
+
     local look, rowHeight = context.look, context.rowHeight
     local column, rowIndex = 0, 0
-    for _, cell in ipairs(visible) do
+    for index, cell in ipairs(visible) do
         local reading = readings[cell]
         local frame = self:Get("cell")
         frame.item = cell
-        local wide = cell.wide
-        if type(wide) == "function" then wide = wide() end
-        -- Narrow: rows of two stack into one column.
-        if context.narrow then wide = true end
+        local wide = wides[index]
         local x, width
         if wide then
             if column == 1 then
@@ -871,8 +896,9 @@ function LAYOUTS.section(self, block, y, context)
         else
             frame.shade:Hide()
         end
-        -- Pinned rows keep the key of where they came from.
-        frame.pinKey = cell.pinKey or PinKey(block.pinSource and block.pinSource[cell] or section, cell, reading)
+        -- Pinned rows keep the key they were pinned by.
+        frame.pinKey = (block.pinKeys and block.pinKeys[cell]) or cell.pinKey
+            or PinKey(block.pinSource and block.pinSource[cell] or section, cell, reading)
         frame:EnableMouse(true)
         if frame.pinKey and not block.pinSource then
             pinIndex[frame.pinKey], pinSourceOf[cell] = cell, section
@@ -909,16 +935,21 @@ function LAYOUTS.pinned(self, block, y, context)
         if not pinIndex[key] then missing = true end
     end
     if missing and not pinScanned and ns.PinSections then
-        pinScanned = true
+        -- In combat some names can't be read; look again once it's over.
+        pinScanned = not InCombatLockdown()
         for _, section in ipairs(ns.PinSections()) do pcall(IndexSection, section) end
     end
-    local cells = {}
+    local cells, keys = {}, {}
     for _, key in ipairs(pins) do
-        if pinIndex[key] then cells[#cells + 1] = pinIndex[key] end
+        local cell = pinIndex[key]
+        if cell and not keys[cell] then
+            cells[#cells + 1] = cell
+            keys[cell] = key
+        end
     end
     if #cells == 0 then return y end
     pinnedSection.cells = cells
-    return LAYOUTS.section(self, { section = pinnedSection, pinSource = pinSourceOf }, y, context)
+    return LAYOUTS.section(self, { section = pinnedSection, pinSource = pinSourceOf, pinKeys = keys }, y, context)
 end
 
 -- Stacked bars: each row's segments side by side, with a legend of coloured keys under it.
@@ -1095,7 +1126,7 @@ function LAYOUTS.worth(self, block, y, context)
         SetColor(parts.detail, look.note)
         down = down + parts.detail:GetStringHeight() + 8
         for _, part in pairs(parts) do part:Show() end
-        parts.fill:SetShown(fill > 0)
+        parts.fill:SetShown(fill > 0) -- after the loop, which showed it
     end
     for i = #rows + 1, #card.rows do
         for _, part in pairs(card.rows[i]) do part:Hide() end
@@ -1288,6 +1319,7 @@ function LAYOUTS.role(self, block, y, context)
         x = x + width
         PaintRole(button, look, gold)
     end
+    bar.label:SetShown(bar.label:GetStringWidth() + x + 12 <= context.inner)
     bar.group:ClearAllPoints()
     bar.group:SetPoint("TOPRIGHT", bar, "TOPRIGHT", 0, 0)
     bar.group:SetSize(x + 2 * pixel, height)
@@ -1336,9 +1368,13 @@ function Panel:Layout()
     self.used = {}
     local y = -4
     local blocks = CurrentTab().blocks
-    if type(blocks) == "function" then blocks = blocks() end
+    if type(blocks) == "function" then
+        local ok, worked = pcall(blocks)
+        blocks = ok and worked or {}
+    end
     for _, block in ipairs(blocks) do
-        y = LAYOUTS[block.kind](self, block, y, context)
+        local ok, below = pcall(LAYOUTS[block.kind], self, block, y, context)
+        if ok and type(below) == "number" then y = below end
     end
     for kind, pool in pairs(self.pools) do
         for i = (self.used[kind] or 0) + 1, #pool do pool[i]:Hide() end
@@ -1452,10 +1488,11 @@ function Panel:Widen()
     end
     if InCombatLockdown() and characterFrame:IsProtected() then return end
     local collapsed = characterFrame.IsRightPaneCollapsed and characterFrame:IsRightPaneCollapsed()
-    local extra = (not collapsed and ns.db.mode == "replace") and (ns.db.extraWidth or 0) or 0
+    local mode = self.mode or ns.db.mode
+    local extra = (not collapsed and mode == "replace") and (ns.db.extraWidth or 0) or 0
     -- The window's width counts FrogUI's extra too (FrogLib's Sheet.lua): set on its own, the
     -- last addon to set it would leave the other's pane hanging over the window's edge.
-    FrogLib.Sheet.SetExtra("StatSheet", "right", ns.db.mode == "replace" and (ns.db.extraWidth or 0) or 0)
+    FrogLib.Sheet.SetExtra("StatSheet", "right", mode == "replace" and (ns.db.extraWidth or 0) or 0)
     characterFrame:SetWidth(FrogLib.Sheet.Width())
     characterFrame.RightPaneHost:SetWidth(PANE_WIDTH + extra)
     for _, region in ipairs({ characterFrame.RightPaneHost:GetRegions() }) do
@@ -1466,12 +1503,12 @@ end
 
 function Panel:Apply()
     self:Create()
-    pcall(self.Widen, self)
     local frame, db = self.frame, ns.db
     local box = StatsList()
     local mode = db.mode
     if mode == "replace" and not box then mode = "beside" end
     self.mode = mode
+    pcall(self.Widen, self)
 
     frame:ClearAllPoints()
     if mode == "replace" then

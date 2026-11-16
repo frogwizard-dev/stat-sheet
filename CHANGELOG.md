@@ -10,7 +10,30 @@
 - **One Melee / Ranged / Caster switch**, in the same place at the top of the Overview and Offense, drawn as one outlined group. "What +10 of each gets you" no longer has a switch of its own.
 - On the Offense tab, the plain Hit row makes way for Caps' Hit Chance, which shows the same number against the hit you need (unless Caps is turned off).
 - The Overview's General block no longer repeats the rage or energy shown on the tile above, and normal running speed (100%) counts as a zero, so the block only shows up when something's changed.
+- A stat that would sit alone on half a row (Crit once Hit has made way, Dodge with no parry or block) takes the whole row instead of leaving an empty half beside it.
+- Attributes leave out effects that come to nothing, such as "+0 RAP" on a warrior's Agility.
 - **Look**: more room between blocks, a faint stripe on every other row in the EllesmereUI look (as the Blizzard look already had), a thin bar in each big number's colour along the top of its tile, and one decimal on bar legends ("Hit 61.7%").
+
+### Fixes
+
+- A druid in cat or bear form sees their energy or rage on the Overview's third tile, not their mana.
+- **+10 Spirit** shows what ten more points really add (a quarter of a point of mana a tick for priests and mages, a fifth for everyone else) rather than the average, which counted regen's fixed part too and overstated it. The health line is gone from it.
+- **+10 Stamina** and **+10 Intellect** count the first 20 points (1 health or mana each) properly when the ten cross them.
+- Spells always have at least 1% to be resisted, so "Resisted" and "Where your spells go" no longer say 0% / lands 100%.
+- Wands: no attack power row or "dps from attack power" (wands are spell damage). Casters see their wand on the Offense tab.
+- The off hand's tooltip and "Where your damage comes from" count the off hand's half of the attack power bonus.
+- Hunters shown as ranged no longer get a melee dual-wield note on Hit Chance.
+- Bag space counts only ordinary bags, not quivers, ammo pouches or soul bags.
+- Auto picks Caster for paladins and shamans whose +healing is the bigger part, not only spell damage.
+- A druid in Cat Form shows its threat (x0.71). From FrogLib 1.11.0.
+- "Resist" and "Resisted (boss)" use the same school names and colours.
+- **Pins**: rows whose names change (rage or energy, your pet, the ranged weapon or wand, armor by level, weapon skill, the List tab) keep their pin when the name changes, shift-click unpins them instead of adding a second pin, and the same row never shows twice.
+- **Since you logged in**: gear with +Defense or +weapon skill no longer also logs a skill-up, moving a ring to the other finger isn't logged as a change, and anything that happens in combat (a level-up on the killing blow, skill-ups) is logged once combat ends, with its full changes.
+- Measured mana regen: a fight no longer drags the resting rate down, and a drink or potion doesn't show as the live rate.
+- Item tooltips: losing +healing is shown, a second copy of a ring or trinket you wear is compared with the other slot, an item the game hasn't loaded yet isn't shown as all loss, and tooltips the comparison adds nothing to are left alone.
+- The panel stays put if one block can't be worked out (the rest of the tab still shows), the scroll position stays in range when a block folds away, and the tabs shrink to fit a narrow panel. The "Show as" label steps aside when there's no room for it.
+- With "Replace the stats list", the window isn't widened while the panel still has to sit beside it (before the game's stats list exists).
+- /statsheet audit: a row with nothing to show is recorded as "not shown", not as an error.
 
 ## 0.5.0
 

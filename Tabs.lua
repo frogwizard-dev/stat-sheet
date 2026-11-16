@@ -77,13 +77,16 @@ local ehpTile = {
     end,
 }
 
+-- Mana, unless another bar is in use (rage, energy: a druid in a form shows that one).
+local function ShowsMana() return Stats.UsesMana() and Stats.DisplayPower() == 0 end
+
 local powerTile = {
     caption = function()
-        if Stats.UsesMana() then return "MANA" end
+        if ShowsMana() then return "MANA" end
         return string.upper(select(2, Stats.DisplayPower()))
     end, colorKey = "Secondary Stats",
     get = function()
-        if Stats.UsesMana() then
+        if ShowsMana() then
             local maxMana = Known(UnitPowerMax("player", 0))
             local rate = ManaRate()
             return Number(maxMana), false, rate > 0 and ("full in " .. Seconds(maxMana / rate)) or "no regen"
@@ -97,7 +100,7 @@ local powerTile = {
         return Number(UnitPowerMax("player", powerType)), false, note
     end,
     tip = function(tooltip)
-        if not Stats.UsesMana() then return end
+        if not ShowsMana() then return end
         local _, measured = ManaRate()
         Line(tooltip, "Time to fill your mana from empty while not casting (without drinking)"
             .. (measured and ", from your measured regen." or "."))
@@ -120,11 +123,20 @@ local function Fraction(Convert, statIndex, stat)
     return share and share * 100 or 0
 end
 
+-- What `points` of a stat give when the first 20 give 1 each and the rest `perPoint` each.
+local function PastBreak(points, perPoint, first)
+    first = first or 20
+    return math.min(first, points) + math.max(0, points - first) * perPoint
+end
+
 local function StaminaRow()
     local _, health = EHP()
     local perPoint = Stats.Call(UnitHPPerStamina, "player") or 10
-    return { stat = "+10 Stamina", headline = string.format("+%d HP", perPoint * 10), colorKey = "Defense",
-        gain = perPoint * 10 / health, detail = string.format("%d%% more effective health", perPoint * 10 / health * 100 + 0.5) }
+    local stamina = StatValue(3)
+    local first = STAMINA_BREAK or 20
+    local gain = PastBreak(stamina + 10, perPoint, first) - PastBreak(stamina, perPoint, first)
+    return { stat = "+10 Stamina", headline = string.format("+%d HP", gain), colorKey = "Defense",
+        gain = gain / health, detail = string.format("%d%% more effective health", gain / health * 100 + 0.5) }
 end
 
 local function MeleeWorth()
@@ -165,7 +177,8 @@ end
 local function IntellectRow()
     local maxMana = Known(UnitPowerMax("player", 0))
     local intellect = StatValue(4)
-    local mana = (intellect + 10 <= (INTELLECT_BREAK or 20)) and 10 or 10 * (MANA_PER_INTELLECT or 15)
+    local perPoint, first = MANA_PER_INTELLECT or 15, INTELLECT_BREAK or 20
+    local mana = PastBreak(intellect + 10, perPoint, first) - PastBreak(intellect, perPoint, first)
     local crit = Fraction(GetSpellCritChanceFromStat, 4, intellect + 10) - Fraction(GetSpellCritChanceFromStat, 4, intellect)
     return { stat = "+10 Intellect", headline = string.format("+%d mana", mana), colorKey = "Secondary Stats",
         gain = mana / maxMana, detail = string.format("%d%% more mana", mana / maxMana * 100 + 0.5)
@@ -198,18 +211,20 @@ local function RangedWorth()
     return rows
 end
 
+local SPIRIT_QUARTER = { PRIEST = true, MAGE = true }
+
 local function CasterWorth()
     local rows = { IntellectRow() }
 
-    local spirit = StatValue(5)
-    local fromSpirit = Stats.Call(GetManaRegenFromSpirit)
     local regen = Known((GetManaRegen()))
-    if fromSpirit and spirit > 0 and regen > 0 then
-        local mp5 = fromSpirit * 5 / spirit * 10
-        local hp5 = (Stats.Call(GetHealthRegenFromSpirit) or 0) * 0.75 * 5 / spirit * 10
+    if regen > 0 then
+        -- Classic's rule: each point of Spirit adds 1/4 mana a tick (every 2 s) for priests and
+        -- mages, 1/5 for the rest; the regen also has a fixed part, so the average overstates it.
+        local perTick = SPIRIT_QUARTER[Stats.Class()] and 0.25 or 0.2
+        local mp5 = 10 * perTick * 5 / 2
         rows[#rows + 1] = { stat = "+10 Spirit", headline = string.format("+%s mp5", OneDecimal(mp5)), colorKey = "Secondary Stats",
-            gain = mp5 / (regen * 5), detail = string.format("%d%% faster mana regen · +%s health per 5s",
-                mp5 / (regen * 5) * 100 + 0.5, OneDecimal(hp5)) }
+            gain = mp5 / (regen * 5), detail = string.format("%d%% faster mana regen while not casting",
+                mp5 / (regen * 5) * 100 + 0.5) }
     end
 
     rows[#rows + 1] = StaminaRow()
@@ -235,7 +250,9 @@ local function AutoRole()
         return (GetShapeshiftForm() or 0) == 0 and "caster" or "melee"
     end
     if class == "SHAMAN" or class == "PALADIN" then
-        local spellPower = Stats.BestSchool(GetSpellBonusDamage)
+        -- Spell damage or +healing, whichever is bigger: a healer casts too.
+        local healing = GetSpellBonusHealing and Known(GetSpellBonusHealing()) or 0
+        local spellPower = math.max(Stats.BestSchool(GetSpellBonusDamage), healing)
         return spellPower > Stats.MeleeAP() / 2 and "caster" or "melee"
     end
     return "melee"
@@ -381,7 +398,7 @@ local armorByLevel = {
 for over = 0, 3 do
     armorByLevel.cells[#armorByLevel.cells + 1] = {
         label = function() return string.format("Level %d%s", UnitLevel("player") + over, over == 3 and " (boss)" or "") end,
-        wide = true,
+        pinKey = "armorLevels:" .. over, wide = true,
         get = function()
             local reduction = Stats.ArmorReduction(Stats.ArmorNow(), over)
             return string.format("%.1f%%", reduction * 100), false, nil, reduction / 0.75
@@ -709,8 +726,7 @@ local measured = {
 -- Resistances against a boss, school by school
 ------------------------------------------------------------------------------
 
-local SCHOOL_COLORS = { { 2, "Fire", "ff8040" }, { 3, "Nat", "4cff4c" }, { 4, "Frost", "80d0ff" },
-    { 5, "Shadow", "b080ff" }, { 6, "Arcane", "ffffff" } }
+local SCHOOL_COLORS = ns.RESISTS -- Stats.lua
 
 -- The average share of a spell resisted, at `resistance` against a caster `level`.
 local function AverageResist(resistance, level)
@@ -749,7 +765,7 @@ for _, cell in ipairs(Section.caps.cells) do
         cell.get = function()
             local text, zero, note, bar = Get()
             local _, offSpeed = UnitAttackSpeed("player")
-            if offSpeed then
+            if offSpeed and not ns.Ranged() then
                 note = string.format("white hits, dual wielding; special attacks need %s", Percent(Stats.HitNeeded(0) - 19))
             end
             return text, zero, note, bar
@@ -769,7 +785,7 @@ local pet = {
     key = "pet", title = "Pet", colorKey = "Attack",
     show = HasPet,
     cells = {
-        { label = function() return UnitName("pet") or "Pet" end, wide = true, get = function()
+        { label = function() return UnitName("pet") or "Pet" end, pinKey = "pet:name", wide = true, get = function()
             if not HasPet() then return false end
             return Number(UnitHealthMax("pet")) .. " HP", false, string.format("level %d", Known(UnitLevel("pet")))
         end },
@@ -898,7 +914,14 @@ local function BagSpace()
     for bag = 0, 4 do
         local slots = Container and Container.GetContainerNumSlots and Container.GetContainerNumSlots(bag) or 0
         total = total + slots
-        if slots > 0 then free = free + (Container.GetContainerNumFreeSlots(bag) or 0) end
+        if slots > 0 then
+            local freeSlots, bagType = Container.GetContainerNumFreeSlots(bag)
+            if (bagType or 0) == 0 then
+                free = free + (freeSlots or 0)
+            else
+                total = total - slots
+            end
+        end
     end
     return free, total
 end
@@ -1004,10 +1027,11 @@ local PET_LIST_COLORS = { "General", "Attributes", "Insights", "Defense" }
 local function ListSection(key, title, colorKey, entries, unit)
     local section = { key = key, title = title, colorKey = colorKey, cells = {} }
     if unit ~= "player" then section.show = function() return UnitExists(unit) and true or false end end
-    for _, entry in ipairs(entries) do
+    for index, entry in ipairs(entries) do
         local last = {}
         section.cells[#section.cells + 1] = {
             wide = true,
+            pinKey = key .. ":" .. index, -- its name is read from the game, so pinned by place
             -- Read after get, which fills it in.
             label = function() return last.label end,
             get = function()
@@ -1143,7 +1167,8 @@ local meleeTiles = {
 local dpsSource = { kind = "bars", key = "dpsSource", title = "Where your damage comes from", colorKey = "Attack", rows = function()
     local paper = Stats.PaperDPS()
     local attackPower = Stats.MeleeAP()
-    local fromAP = attackPower / Stats.AP_PER_DPS
+    local _, offSpeed = UnitAttackSpeed("player")
+    local fromAP = attackPower / Stats.AP_PER_DPS * (offSpeed and 1.5 or 1)
     local weapon = math.max(0, paper - fromAP)
     return { {
         segs = {
@@ -1207,6 +1232,7 @@ local function OffenseBlocks()
             { kind = "section", section = Section.spell, skip = { Damage = true, Crit = true, ["Mana Regen"] = true } },
             spellsGo,
             castsFromFull,
+            { kind = "section", section = Section.ranged },
             { kind = "section", section = pet },
             { kind = "section", section = Section.melee },
         }
@@ -1276,7 +1302,7 @@ ns.Tabs = {
                     end
                     local health = Known(UnitHealthMax("player"))
                     if best == 0 then return Number(health), false, "no resistances yet" end
-                    local average = math.min(0.75, 0.75 * best / (level * 5))
+                    local average = AverageResist(best, level)
                     return Number(math.floor(health / (1 - average) + 0.5)), false,
                         string.format("best school %d%%", average * 100 + 0.5)
                 end },

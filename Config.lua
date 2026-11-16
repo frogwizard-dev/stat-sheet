@@ -77,8 +77,17 @@ local SECTION_LABELS = {
 
 -- Defense skill moved from Caps (Overview) to Defense (0.6.0): a pin on it follows it there.
 local function MovePins(pins)
-    for i, key in ipairs(pins) do
-        if key == "caps:" .. (DEFENSE or "Defense") then pins[i] = "defense:Defense skill" end
+    local have = {}
+    for _, key in ipairs(pins) do have[key] = true end
+    for i = #pins, 1, -1 do
+        if pins[i] == "caps:" .. (DEFENSE or "Defense") then
+            if have["defense:Defense skill"] then
+                table.remove(pins, i)
+            else
+                pins[i] = "defense:Defense skill"
+                have["defense:Defense skill"] = true
+            end
+        end
     end
 end
 

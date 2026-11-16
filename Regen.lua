@@ -17,6 +17,7 @@ local runs = { rest = {}, casting = {} } -- per kind, the run going on: { starte
 local results = {}      -- per kind: { rate = mana per second, ticks, seconds, at }
 local lastMana, lastSpend = nil, -FIVE_SECOND_RULE
 local castingGain = false
+local blindUntil = 0    -- after a stretch of hidden mana: gains aren't counted until this time
 
 local function Expected(kind)
     if not GetManaRegen then return nil end
@@ -25,13 +26,18 @@ local function Expected(kind)
     return kind == "rest" and base or casting
 end
 
+-- A rate this far over GetManaRegen's is a drink, a potion or Innervate, not plain regen.
+local function Outlier(kind, rate)
+    local expected = Expected(kind)
+    return expected and expected > 0 and rate > expected * OUTLIER
+end
+
 local function Finish(kind)
     local run = runs[kind]
     if run.ticks and run.ticks >= MIN_TICKS and run.last > run.started then
         local seconds = run.last - run.started
         local rate = run.gained / seconds
-        local expected = Expected(kind)
-        if not (expected and expected > 0 and rate > expected * OUTLIER) then
+        if not Outlier(kind, rate) then
             results[kind] = { rate = rate, ticks = run.ticks, seconds = seconds, at = GetTime() }
         end
     end
@@ -40,11 +46,21 @@ end
 
 local function OnMana()
     local mana, max = UnitPower("player", 0), UnitPowerMax("player", 0)
+    local now = GetTime()
     if issecret(mana) or issecret(max) or not max or max <= 0 then
+        -- Hidden (combat): the runs end here, and since spending can't be seen either, what comes
+        -- back in the next five seconds can't be told apart as resting or casting.
         lastMana = nil
+        Finish("rest")
+        Finish("casting")
+        blindUntil = now + FIVE_SECOND_RULE
         return
     end
-    local now = GetTime()
+    if now < blindUntil then
+        if lastMana and mana < lastMana then lastSpend = now end
+        lastMana = mana
+        return
+    end
     if lastMana then
         if mana < lastMana then
             lastSpend = now
@@ -80,7 +96,8 @@ end
 function Regen:Rate(kind)
     local run = runs[kind]
     if run.ticks and run.ticks >= MIN_TICKS + 2 and run.last > run.started then
-        return run.gained / (run.last - run.started), run.ticks, run.last - run.started
+        local rate = run.gained / (run.last - run.started)
+        if not Outlier(kind, rate) then return rate, run.ticks, run.last - run.started end
     end
     local result = results[kind]
     if result then return result.rate, result.ticks, result.seconds end
