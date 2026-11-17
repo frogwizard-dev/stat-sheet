@@ -2,7 +2,8 @@ local _, ns = ...
 
 -- What enemies' swings have done to you: the game's combat feedback (UNIT_COMBAT) for your own
 -- unit, physical only, the last few hundred this session. The Defense tab's "Measured in your
--- fights" reads it. Amounts the game hides (in some instances) are left out.
+-- fights" reads it. Since Forever 1.60.1.70938 the game hides every hit's size, everywhere: a hit
+-- still counts, only without its number.
 
 local issecret = FrogLib.issecret
 local KEEP = 300
@@ -66,17 +67,24 @@ events:SetScript("OnEvent", function(_, event, _, action, flags, amount, school)
     if avoided then
         Add({ kind = avoided })
     elseif action == "WOUND" then
-        if issecret(amount) or type(amount) ~= "number" or amount <= 0 then return end
+        local known = not issecret(amount) and type(amount) == "number"
+        if flags == "BLOCK" and not (known and amount > 0) then
+            -- All of it blocked (the game shows "Block" for it too), not a hit.
+            Add({ kind = "block" })
+            return
+        end
+        if known and amount <= 0 then return end
         local kind = "hit"
         if flags == "CRITICAL" then kind = "crit" elseif flags == "CRUSHING" then kind = "crush" end
-        Add({ kind = kind, amount = amount, blocked = flags == "BLOCK_REDUCED" })
+        Add({ kind = kind, amount = known and amount or nil, blocked = flags == "BLOCK_REDUCED" })
     end
 end)
 
--- How many swings (count) and how many of each kind, the average plain hit and the largest hit.
+-- How many swings (count) and how many of each kind, the average plain hit and the largest hit,
+-- and how many hits came without their size (unsized).
 function Incoming:Summary()
     local summary = { count = 0, hit = 0, crit = 0, crush = 0, dodge = 0, parry = 0, miss = 0, block = 0,
-        largest = 0 }
+        largest = 0, unsized = 0 }
     local plainTotal, plainCount = 0, 0
     for _, swing in pairs(self.list) do
         summary.count = summary.count + 1
@@ -88,6 +96,8 @@ function Incoming:Summary()
                 plainCount = plainCount + 1
             end
             summary.largest = math.max(summary.largest, swing.amount)
+        elseif swing.kind == "hit" or swing.kind == "crit" or swing.kind == "crush" then
+            summary.unsized = summary.unsized + 1
         end
     end
     summary.averageHit = plainCount > 0 and plainTotal / plainCount or nil

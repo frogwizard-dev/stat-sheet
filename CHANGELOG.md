@@ -34,6 +34,7 @@
 
 ### Fixes
 
+- **Measured in your fights** counts your hits taken again. A Forever update hides from add-ons how hard each hit lands, and since then every hit was left out, so Avoided read nearly 100% and Crits taken and Crushing 0%. Hits count again without their size; only the Average hit row stays hidden while the game keeps it to itself. A hit the game shows only as "Block" counts as blocked.
 - A druid in cat or bear form sees their energy or rage on the Overview's third tile, not their mana.
 - **+10 Spirit** shows what ten more points really add (a quarter of a point of mana a tick for priests and mages, a fifth for everyone else) rather than the average, which counted regen's fixed part too and overstated it. The health line is gone from it.
 - **+10 Stamina** and **+10 Intellect** count the first 20 points (1 health or mana each) properly when the ten cross them.

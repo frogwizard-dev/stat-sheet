@@ -691,6 +691,10 @@ local measured = {
         end, tip = function(tooltip)
             Line(tooltip, "What really happened when enemies swung at you, from the game's own combat feedback, "
                 .. "rather than worked out. Abilities that deal physical damage count too.")
+            local summary = ns.Incoming:Summary()
+            if summary.unsized > 0 and not summary.averageHit then
+                Line(tooltip, "The game doesn't tell add-ons how hard each hit was, so there's no average hit.")
+            end
         end },
         { label = "Avoided", get = function()
             local summary = ns.Incoming:Summary()
