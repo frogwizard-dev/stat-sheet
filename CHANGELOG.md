@@ -1,5 +1,9 @@
 # StatSheet
 
+## 0.6.1
+
+- Shared code (FrogLib 1.12.0): see its notes for the rest of what's fixed.
+
 ## 0.6.0
 
 - **Tidier tabs**: each block now sits with the stats it belongs to.

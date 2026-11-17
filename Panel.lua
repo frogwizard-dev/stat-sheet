@@ -91,7 +91,7 @@ end
 
 local function SetFont(text, path, size)
     -- Only when it changes (FrogLib's Media notes the font it set on the text).
-    if text.frogFont ~= path .. "|" .. size .. "|" then ns.Media:SetFont(text, path, size, "") end
+    if FrogLib.Media.Wanted(text) ~= path .. "|" .. size .. "|" then ns.Media:SetFont(text, path, size, "") end
 end
 
 -- One screen pixel in the frame's units, for hairlines.
