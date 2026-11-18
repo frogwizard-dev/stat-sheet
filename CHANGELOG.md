@@ -1,5 +1,9 @@
 # StatSheet
 
+## 0.6.2
+
+- The audit's chat lines wait for the end of combat when they come during it; "run the audit out of combat" shows on screen at once. Shared code (FrogLib 1.13.0): chat lines that come during combat wait for it to end (a line printed in combat taints the chat history, as EllesmereUI found).
+
 ## 0.6.1
 
 - Shared code (FrogLib 1.12.0): see its notes for the rest of what's fixed.

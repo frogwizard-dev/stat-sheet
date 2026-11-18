@@ -332,15 +332,15 @@ end
 
 function Audit:Run(full)
     if InCombatLockdown() then
-        print("|cff40c0ffStatSheet|r: run the audit out of combat.")
+        FrogLib.Util.Warn("StatSheet: run the audit out of combat.")
         return
     end
     if not (_G.CharacterFrame and _G.CharacterFrame:IsShown() and _G.CharacterStatsPaneScrollBox
         and _G.CharacterStatsPaneScrollBox:IsVisible()) then
-        print("|cff40c0ffStatSheet|r: open your character sheet on the stats tab first, then run /statsheet audit again.")
+        FrogLib.Util.Say("|cff40c0ffStatSheet|r: open your character sheet on the stats tab first, then run /statsheet audit again.")
         return
     end
-    print("|cff40c0ffStatSheet|r: auditing... keep the character sheet open for a few seconds.")
+    FrogLib.Util.Say("|cff40c0ffStatSheet|r: auditing... keep the character sheet open for a few seconds.")
     local key = FormKey()
     local result = {
         time = date("%Y-%m-%d %H:%M:%S"),
@@ -360,7 +360,7 @@ function Audit:Run(full)
         Json(result, out)
         ns.db.audits = ns.db.audits or {}
         ns.db.audits[key] = { time = result.time, json = table.concat(out) }
-        print(("|cff40c0ffStatSheet|r: audit saved (%s). Type |cffffd100/reload|r to write it to disk.")
+        FrogLib.Util.Say(("|cff40c0ffStatSheet|r: audit saved (%s). Type |cffffd100/reload|r to write it to disk.")
             :format(key))
     end
     -- Stepping through Blizzard's list (its rows and tooltips) only with "/statsheet audit full".
