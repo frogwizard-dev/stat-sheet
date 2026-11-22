@@ -397,9 +397,8 @@ local melee = {
         end },
         { label = "Crit", get = function() return Percent(GetCritChance()) end },
         { label = "Hit", get = function()
-            if not GetHitModifier then return false end
-            local hit = GetHitModifier() or 0
-            return "+" .. Percent(hit), Known(hit) == 0
+            local hit = Tank.MeleeHit()
+            return "+" .. Percent(hit), hit == 0
         end },
         { label = "Haste", get = function()
             if not GetMeleeHaste then return false end
@@ -421,10 +420,7 @@ local function RangedHaste()
     return Known(haste) + Known(quiver or 0)
 end
 
-local function RangedHit()
-    if not GetRangedHitModifier then return Tank.MeleeHit() end
-    return Known(GetRangedHitModifier() or 0)
-end
+local RangedHit = Tank.RangedHit -- gear's hit rating plus talents
 
 -- A wand: spell damage, so ranged attack power does nothing for it.
 local function HasWand()
@@ -512,9 +508,8 @@ local spell = {
         { label = "Crit", get = function() return Percent((BestSchool(GetSpellCritChance))) end,
           tip = function(tooltip) SchoolTip(tooltip, GetSpellCritChance, Percent) end },
         { label = "Hit", get = function()
-            if not GetSpellHitModifier then return false end
-            local hit = GetSpellHitModifier() or 0
-            return "+" .. Percent(hit), Known(hit) == 0
+            local hit = Tank.SpellHit()
+            return "+" .. Percent(hit), hit == 0
         end },
         { label = "Haste", get = function()
             if not UnitSpellHaste then return false end
@@ -689,8 +684,7 @@ local IncomingTable = Tank.IncomingTable
 -- Spells miss an enemy 0-3 levels up 4 / 5 / 6 / 17% of the time, less your spell hit.
 local SPELL_MISS = { [0] = 4, 5, 6, 17 }
 local function SpellMiss(over)
-    local hit = GetSpellHitModifier and Known(GetSpellHitModifier() or 0) or 0
-    return math.max(1, SPELL_MISS[over] - hit) -- 1% always gets resisted
+    return math.max(1, SPELL_MISS[over] - Tank.SpellHit()) -- 1% always gets resisted
 end
 
 ------------------------------------------------------------------------------

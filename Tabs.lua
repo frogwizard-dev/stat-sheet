@@ -44,8 +44,13 @@ local damageTile = {
     caption = function() return Caster() and "SPELL POWER" or "REAL DPS" end, colorKey = "Attack",
     get = function()
         if Caster() then
-            return "+" .. Number((Stats.BestSchool(GetSpellBonusDamage))), false,
-                Percent((Stats.BestSchool(GetSpellCritChance))) .. " crit"
+            -- Healing joins the line under it when +healing gear takes it past spell damage (one school's
+            -- gear leaves healing below that school, which is no reason to show it).
+            local damage = Stats.BestSchool(GetSpellBonusDamage)
+            local healing = GetSpellBonusHealing and Known(GetSpellBonusHealing()) or damage
+            local crit = Percent((Stats.BestSchool(GetSpellCritChance))) .. " crit"
+            if healing > damage then crit = string.format("+%s healing · %s", Number(healing), crit) end
+            return "+" .. Number(damage), false, crit
         end
         local paper, share
         if Ranged() then
@@ -57,7 +62,8 @@ local damageTile = {
     end,
     tip = function(tooltip)
         if Caster() then
-            Line(tooltip, "Bonus damage and healing on your spells. Switch to Melee to see your real DPS.")
+            Line(tooltip, "Bonus damage on your spells, with your bonus healing under it when that's higher. "
+                .. "Switch to Melee to see your real DPS.")
         elseif Ranged() then
             Line(tooltip, "What your ranged auto-attacks really do to an enemy of your level, after misses "
                 .. "and crits. The Offense tab shows the split.")

@@ -1,5 +1,11 @@
 # StatSheet
 
+## 0.6.3
+
+- **Hit counts your gear's hit rating.** Hit Chance in Caps, the Hit rows (melee, ranged and spell) and everything worked out from them (where your swings, shots and spells go, real DPS, what +1% hit gets you) only counted hit from talents and buffs: a paladin with Precision and 3.9% from gear showed 3%, not 6.9%. They now add the two up as the game's own character sheet does. Thanks for the detailed report!
+- **Healing on the Overview**: as a caster, the Spell Power tile shows your bonus healing under it when +healing gear takes it past your spell damage, so you don't need the List tab for it.
+- Shared code (FrogLib 1.16.0): hit chance counts hit rating.
+
 ## 0.6.2
 
 - The audit's chat lines wait for the end of combat when they come during it; "run the audit out of combat" shows on screen at once. Shared code (FrogLib 1.13.0): chat lines that come during combat wait for it to end (a line printed in combat taints the chat history, as EllesmereUI found).
