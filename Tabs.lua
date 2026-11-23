@@ -6,6 +6,7 @@ local _, ns = ...
 -- through ns.Stats (Stats.lua), so secret values in combat keep the last reading.
 
 local Stats, Section = ns.Stats, ns.SectionByKey
+local Talents = ns.Talents -- what talents and buffs make a stat on an item worth
 local Known, Number, Percent, OneDecimal, Line = Stats.Known, Stats.Number, Stats.Percent, Stats.OneDecimal, Stats.Line
 
 -- Spells known, buffs on you, and your threat multiplier with its parts.
@@ -132,6 +133,29 @@ local function Fraction(Convert, statIndex, stat)
     return share and share * 100 or 0
 end
 
+-- What 10 of a stat on an item add to the stat on you (more with Divine Strength, Kings and the
+-- like), and "+11 Strength on you · " for the row's detail when that isn't 10.
+local function TenOnYou(statIndex, name)
+    local points = 10 * Talents.StatScale(statIndex)
+    if math.abs(points - 10) < 0.05 then return points, "" end
+    return points, string.format("+%s %s on you · ", OneDecimal(points), name)
+end
+
+-- " · +3 healing, +1 spell damage" (or " · +2 spell power") for `points` of a stat counted as spell
+-- damage and healing by those shares (fractions); "" for none.
+local function SpellText(damageShare, healShare, points)
+    if damageShare * points < 0.5 and healShare * points >= 0.5 then
+        return string.format(" · +%d healing", healShare * points + 0.5)
+    elseif healShare * points < 0.5 and damageShare * points >= 0.5 then
+        return string.format(" · +%d spell damage", damageShare * points + 0.5)
+    elseif math.abs(healShare - damageShare) * points >= 0.5 then
+        return string.format(" · +%d healing, +%d spell damage", healShare * points + 0.5, damageShare * points + 0.5)
+    elseif damageShare * points >= 0.5 then
+        return string.format(" · +%d spell power", damageShare * points + 0.5)
+    end
+    return ""
+end
+
 -- What `points` of a stat give when the first 20 give 1 each and the rest `perPoint` each.
 local function PastBreak(points, perPoint, first)
     first = first or 20
@@ -142,10 +166,40 @@ local function StaminaRow()
     local _, health = EHP()
     local perPoint = Stats.Call(UnitHPPerStamina, "player") or 10
     local stamina = StatValue(3)
+    local points, onYou = TenOnYou(3, "Stamina")
     local first = STAMINA_BREAK or 20
-    local gain = PastBreak(stamina + 10, perPoint, first) - PastBreak(stamina, perPoint, first)
+    local gain = (PastBreak(stamina + points, perPoint, first) - PastBreak(stamina, perPoint, first)) * Talents.HealthScale()
     return { stat = "+10 Stamina", headline = string.format("+%d HP", gain), colorKey = "Defense",
-        gain = gain / health, detail = string.format("%d%% more effective health", gain / health * 100 + 0.5) }
+        gain = gain / health, detail = onYou .. string.format("%d%% more effective health", gain / health * 100 + 0.5) }
+end
+
+-- +10 Intellect: mana and spell crit, and what talents make of it (spell power, armor). With
+-- `DPSFromAP` (melee or, `ranged`, shots), Intellect's attack power (Mental Dexterity, Careful Aim)
+-- leads as damage a second against `real`.
+local function IntellectRow(DPSFromAP, real, ranged)
+    local maxMana = Known(UnitPowerMax("player", 0))
+    local intellect = StatValue(4)
+    local points, onYou = TenOnYou(4, "Intellect")
+    local perPoint, first = MANA_PER_INTELLECT or 15, INTELLECT_BREAK or 20
+    local mana = (PastBreak(intellect + points, perPoint, first) - PastBreak(intellect, perPoint, first)) * Talents.ManaScale()
+    local crit = Fraction(GetSpellCritChanceFromStat, 4, intellect + points) - Fraction(GetSpellCritChanceFromStat, 4, intellect)
+    local armor = points * Talents.IntToArmor() -- Arcane Resilience
+    local damageShare, healShare = Talents.IntToSpell()
+    local rest = (crit >= 0.05 and string.format(" · +%.1f%% spell crit", crit) or "")
+        .. SpellText(damageShare, healShare, points)
+        .. (armor >= 0.5 and string.format(" · +%d armor", armor + 0.5) or "")
+    local attackPower = 0
+    if DPSFromAP then
+        local meleeAP, rangedAP = Talents.IntAPChange(intellect, intellect + points)
+        attackPower = ranged and rangedAP or meleeAP
+    end
+    if attackPower >= 0.5 and real > 0 then
+        local dps = DPSFromAP(attackPower)
+        return { stat = "+10 Intellect", headline = string.format("+%.2f DPS", dps), colorKey = "Attack",
+            gain = dps / real, detail = onYou .. string.format("+%d attack power · +%d mana", attackPower + 0.5, mana) .. rest }
+    end
+    return { stat = "+10 Intellect", headline = string.format("+%d mana", mana), colorKey = "Secondary Stats",
+        gain = mana / maxMana, detail = onYou .. string.format("%d%% more mana", mana / maxMana * 100 + 0.5) .. rest }
 end
 
 local function MeleeWorth()
@@ -158,25 +212,31 @@ local function MeleeWorth()
     local function DPSFromAP(attackPower) return attackPower / Stats.AP_PER_DPS * hands * swings.mult end
 
     local strength = StatValue(1)
-    local strengthAP = (Stats.StatAP(1, strength + 10) or 0) - (Stats.StatAP(1, strength) or 0)
+    local strengthPoints, strengthOnYou = TenOnYou(1, "Strength")
+    local strengthAP = (Stats.StatAP(1, strength + strengthPoints) or 0) - (Stats.StatAP(1, strength) or 0)
     local strengthDPS = DPSFromAP(strengthAP)
     rows[#rows + 1] = { stat = "+10 Strength", headline = string.format("+%.1f DPS", strengthDPS), colorKey = "Attack",
-        gain = strengthDPS / real,
-        detail = string.format("+%d attack power · %d%% more damage", strengthAP, strengthDPS / real * 100 + 0.5) }
+        gain = strengthDPS / real, detail = strengthOnYou
+            .. string.format("+%d attack power · %d%% more damage", strengthAP, strengthDPS / real * 100 + 0.5) }
 
     rows[#rows + 1] = StaminaRow()
 
     local agility = StatValue(2)
-    local crit = Fraction(GetCritChanceFromStat, 2, agility + 10) - Fraction(GetCritChanceFromStat, 2, agility)
-    local agilityAP = (Stats.StatAP(2, agility + 10) or 0) - (Stats.StatAP(2, agility) or 0)
+    local agilityPoints, agilityOnYou = TenOnYou(2, "Agility")
+    local crit = Fraction(GetCritChanceFromStat, 2, agility + agilityPoints) - Fraction(GetCritChanceFromStat, 2, agility)
+    local agilityAP = (Stats.StatAP(2, agility + agilityPoints) or 0) - (Stats.StatAP(2, agility) or 0)
     -- Crit only helps white hits up to the crit cap (what misses, dodges and glancing blows leave).
     local room = math.max(0, 100 - swings.miss - swings.dodge - swings.glance + swings.critPenalty
         - Known(GetCritChance()))
     local agilityDPS = paper * math.min(crit, room) / 100 + DPSFromAP(agilityAP)
-    local dodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agility) * 10
+    local dodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agility) * agilityPoints
     rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agilityDPS), colorKey = "Attack",
-        gain = agilityDPS / real, detail = string.format("+%.1f%% crit · +%.1f%% dodge · +20 armor%s", crit, dodge,
-            agilityAP > 0 and string.format(" · +%d AP", agilityAP) or "") }
+        gain = agilityDPS / real, detail = agilityOnYou .. string.format("+%.1f%% crit · +%.1f%% dodge · +%d armor%s",
+            crit, dodge, agilityPoints * 2, agilityAP > 0 and string.format(" · +%d AP", agilityAP) or "") }
+
+    if Talents.IntToAP() > 0 and Known(UnitPowerMax("player", 0)) > 0 then
+        rows[#rows + 1] = IntellectRow(DPSFromAP, real, false)
+    end
 
     if swings.miss > 0 then
         local hitDPS = paper * math.min(1, swings.miss) / 100
@@ -184,17 +244,6 @@ local function MeleeWorth()
             gain = hitDPS / real, detail = "1 fewer miss in every 100 swings" }
     end
     return rows
-end
-
-local function IntellectRow()
-    local maxMana = Known(UnitPowerMax("player", 0))
-    local intellect = StatValue(4)
-    local perPoint, first = MANA_PER_INTELLECT or 15, INTELLECT_BREAK or 20
-    local mana = PastBreak(intellect + 10, perPoint, first) - PastBreak(intellect, perPoint, first)
-    local crit = Fraction(GetSpellCritChanceFromStat, 4, intellect + 10) - Fraction(GetSpellCritChanceFromStat, 4, intellect)
-    return { stat = "+10 Intellect", headline = string.format("+%d mana", mana), colorKey = "Secondary Stats",
-        gain = mana / maxMana, detail = string.format("%d%% more mana", mana / maxMana * 100 + 0.5)
-            .. (crit >= 0.05 and string.format(" · +%.1f%% spell crit", crit) or "") }
 end
 
 -- A hunter's shots: Strength gives them no ranged attack power, so it isn't here.
@@ -205,15 +254,16 @@ local function RangedWorth()
     local real = paper * shots.mult
 
     local agility = StatValue(2)
-    local crit = Fraction(GetCritChanceFromStat, 2, agility + 10) - Fraction(GetCritChanceFromStat, 2, agility)
-    local agilityAP = Stats.StatRAP(2, agility + 10) - Stats.StatRAP(2, agility)
+    local points, onYou = TenOnYou(2, "Agility")
+    local crit = Fraction(GetCritChanceFromStat, 2, agility + points) - Fraction(GetCritChanceFromStat, 2, agility)
+    local agilityAP = Stats.StatRAP(2, agility + points) - Stats.StatRAP(2, agility)
     local agilityDPS = paper * crit / 100 + agilityAP / Stats.AP_PER_DPS * shots.mult
     rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%.2f DPS", agilityDPS), colorKey = "Attack",
         gain = agilityDPS / real,
-        detail = string.format("+%d ranged attack power · +%.1f%% crit", agilityAP, crit) }
+        detail = onYou .. string.format("+%d ranged attack power · +%.1f%% crit", agilityAP, crit) }
 
     rows[#rows + 1] = StaminaRow()
-    rows[#rows + 1] = IntellectRow()
+    rows[#rows + 1] = IntellectRow(function(attackPower) return attackPower / Stats.AP_PER_DPS * shots.mult end, real, true)
 
     if shots.miss > 0 then
         local hitDPS = paper * math.min(1, shots.miss) / 100
@@ -233,10 +283,14 @@ local function CasterWorth()
         -- Classic's rule: each point of Spirit adds 1/4 mana a tick (every 2 s) for priests and
         -- mages, 1/5 for the rest; the regen also has a fixed part, so the average overstates it.
         local perTick = SPIRIT_QUARTER[Stats.Class()] and 0.25 or 0.2
-        local mp5 = 10 * perTick * 5 / 2
+        local points, onYou = TenOnYou(5, "Spirit")
+        local mp5 = points * perTick * 5 / 2
+        -- Spiritual Guidance: a share of Spirit as spell damage and healing.
+        local spiritDamage, spiritHeal = Talents.SpiritToSpell()
+        local spell = SpellText(spiritDamage, spiritHeal, points)
         rows[#rows + 1] = { stat = "+10 Spirit", headline = string.format("+%s mp5", OneDecimal(mp5)), colorKey = "Secondary Stats",
-            gain = mp5 / (regen * 5), detail = string.format("%d%% faster mana regen while not casting",
-                mp5 / (regen * 5) * 100 + 0.5) }
+            gain = mp5 / (regen * 5), detail = onYou .. string.format("%d%% faster mana regen while not casting",
+                mp5 / (regen * 5) * 100 + 0.5) .. spell }
     end
 
     rows[#rows + 1] = StaminaRow()

@@ -5,6 +5,7 @@ local _, ns = ...
 -- The items' own stats only (C_Item.GetItemStats): enchants on what you wear now are ignored.
 
 local Stats = ns.Stats
+local Talents = ns.Talents -- what talents and buffs make a stat on an item worth
 
 -- Reading an item's stats and where it would go: FrogLib.Tank (shared with other add-ons).
 local Tank = FrogLib.Tank
@@ -53,9 +54,17 @@ end
 
 local WAND = 19
 
+-- The stat on you now and with the item's `change`, which talents and buffs raise by their share.
 local function StatAfter(statIndex, change)
     local _, stat = UnitStat("player", statIndex)
-    return Stats.Known(stat), Stats.Known(stat) + change
+    return Stats.Known(stat), Stats.Known(stat) + change * Talents.StatScale(statIndex)
+end
+
+-- An item's bonus healing: its +healing, or its "damage and healing" spell power, whichever the game
+-- lists (some list a "damage and healing" item as both spell damage and healing, some as spell power).
+local function ItemHealing(link)
+    local stats = link and C_Item.GetItemStats(link) or {}
+    return math.max(tonumber(stats.ITEM_MOD_SPELL_HEALING_DONE_SHORT) or 0, tonumber(stats.ITEM_MOD_SPELL_POWER_SHORT) or 0)
 end
 
 -- The changes, as { label, text, good } lines.
@@ -68,17 +77,22 @@ local function Changes(newLink, old, slot)
     -- A druid in cat or bear form fights with its paws: the weapon's own damage doesn't count.
     if class == "DRUID" and Stats.DisplayPower() ~= 0 then diff.dps = 0 end
     local function Add(label, value, template, suffix)
+        -- Whole numbers are rounded, so a fraction doesn't show as "+0" or 2.8 as "+2".
+        if template == "%+d" then value = math.floor(value + 0.5) end
         if math.abs(value) < 0.05 then return end
         lines[#lines + 1] = { label, string.format(template, value) .. (suffix or ""), value > 0 }
     end
 
-    -- Real DPS: weapon damage, attack power (items and Strength/Agility), crit from Agility.
+    -- Real DPS: weapon damage, attack power (items, Strength/Agility, Intellect with Mental
+    -- Dexterity or Careful Aim), crit from Agility.
     local paper = Stats.PaperDPS()
     local swings = Stats.SwingTable(0)
     local strengthNow, strengthNew = StatAfter(1, diff.str)
     local agilityNow, agilityNew = StatAfter(2, diff.agi)
+    local intellectNow, intellectNew = StatAfter(4, diff.int)
+    local intellectAP, intellectRAP = Talents.IntAPChange(intellectNow, intellectNew)
     local apChange = diff.ap + ((Stats.StatAP(1, strengthNew) or 0) - (Stats.StatAP(1, strengthNow) or 0))
-        + ((Stats.StatAP(2, agilityNew) or 0) - (Stats.StatAP(2, agilityNow) or 0))
+        + ((Stats.StatAP(2, agilityNew) or 0) - (Stats.StatAP(2, agilityNow) or 0)) + intellectAP
     local critNow = Stats.Call(GetCritChanceFromStat, 2, agilityNow) or 0
     local critNew = Stats.Call(GetCritChanceFromStat, 2, agilityNew) or 0
     local paperChange = diff.dps + apChange / Stats.AP_PER_DPS
@@ -96,38 +110,49 @@ local function Changes(newLink, old, slot)
         local shots = Stats.ShotTable(0)
         local weaponChange = oldRanged and (new.dps - oldRanged.dps) or 0
         local rapChange = diff.ap + (diff.rap or 0) + Stats.StatRAP(2, agilityNew) - Stats.StatRAP(2, agilityNow)
+            + intellectRAP
         local rangedChange = weaponChange + rapChange / Stats.AP_PER_DPS
         Add("Ranged DPS", rangedChange * shots.mult + (rangedPaper + rangedChange) * (critNew - critNow), "%+.1f")
     end
 
-    -- Effective health: Stamina, armor (items and Agility).
+    -- Effective health: Stamina (and talents raising health), armor (items, with Toughness or a
+    -- bear's or moonkin's share; Agility; Intellect with Arcane Resilience).
     local health = Stats.Known(UnitHealthMax("player"))
     local armor = Stats.ArmorNow()
     local staminaNow, staminaNew = StatAfter(3, diff.sta)
     local perPoint = Stats.Call(UnitHPPerStamina, "player") or 10
-    local healthChange = (staminaNew - staminaNow) * perPoint
-    local newArmor = armor + diff.armor + diff.agi * 2
+    local healthChange = (staminaNew - staminaNow) * perPoint * Talents.HealthScale()
+    local newArmor = armor + diff.armor * Talents.ItemArmorScale() + (agilityNew - agilityNow) * 2
+        + (intellectNew - intellectNow) * Talents.IntToArmor()
     local ehpNow = health / (1 - Stats.ArmorReduction(armor))
     local ehpNew = (health + healthChange) / (1 - Stats.ArmorReduction(newArmor))
     if ehpNow > 0 then
         Add("Effective health", ehpNew - ehpNow, "%+d", string.format(" (%+.0f%%)", (ehpNew / ehpNow - 1) * 100))
     end
 
-    Add("Spell power", diff.sp, "%+d")
+    -- Spell power and healing: the item's, and Spirit's and Intellect's shares (Spiritual Guidance,
+    -- Mental Quickness, Champion of the Light, Natural Instinct).
+    local spiritNow, spiritNew = StatAfter(5, diff.spi)
+    local spiritChange, intellectChange = spiritNew - spiritNow, intellectNew - intellectNow
+    local spiritDamage, spiritHeal = Talents.SpiritToSpell()
+    local intellectDamage, intellectHeal = Talents.IntToSpell()
+    local itemHealing = ItemHealing(newLink)
+    for _, link in pairs(type(old) == "table" and old or { old }) do itemHealing = itemHealing - ItemHealing(link) end
+    local spellChange = diff.sp + spiritChange * spiritDamage + intellectChange * intellectDamage
+    local healChange = itemHealing + spiritChange * spiritHeal + intellectChange * intellectHeal
+    Add("Spell power", spellChange, "%+d")
     -- Healing gets its own line when it moves differently from spell power (+healing gear).
-    if diff.heal ~= diff.sp then Add("Healing", diff.heal, "%+d") end
+    if math.floor(healChange + 0.5) ~= math.floor(spellChange + 0.5) then Add("Healing", healChange, "%+d") end
     if Stats.UsesMana() then
-        local intellectNow, intellectNew = StatAfter(4, diff.int)
         local first = INTELLECT_BREAK or 20
         local function Mana(intellect)
             return math.min(first, intellect) + math.max(0, intellect - first) * (MANA_PER_INTELLECT or 15)
         end
-        Add("Mana", Mana(intellectNew) - Mana(intellectNow), "%+d")
-        local spirit = select(2, UnitStat("player", 5))
+        Add("Mana", (Mana(intellectNew) - Mana(intellectNow)) * Talents.ManaScale(), "%+d")
         local fromSpirit = Stats.Call(GetManaRegenFromSpirit)
         local regenChange = diff.mp5
-        if fromSpirit and Stats.Known(spirit) > 0 then
-            regenChange = regenChange + fromSpirit * 5 / Stats.Known(spirit) * diff.spi
+        if fromSpirit and spiritNow > 0 then
+            regenChange = regenChange + fromSpirit * 5 / spiritNow * spiritChange
         end
         Add("Mana regen", regenChange, "%+.1f", " mp5")
     end

@@ -352,6 +352,7 @@ function Audit:Run(full)
         skills = SkillDump(),
         auras = AuraDump(),
         found = FoundDump(),
+        talents = ns.Talents and Clean(select(2, pcall(ns.Talents.Report)), 4),
         regen = ns.Regen and Clean(ns.Regen:Snapshot(), 3),
     }
     local function Save(rows)

@@ -1,5 +1,17 @@
 # StatSheet
 
+## 0.7.0
+
+- **Your talents count before you equip.** Item tooltips and "What +10 of each gets you" used to treat +10 Strength on an item as +10 on you. They now count the talents, forms and buffs on your character that change what a stat is worth:
+  - A stat raised by a share: Divine Strength and Divine Intellect (paladin), Heart of the Wild (druid: Intellect, Strength in Cat Form, Stamina in Bear Form), Living Spirit (druid), Lightning Reflexes (hunter), Arcane Mind (mage), Mental Strength (priest), Toughness and Ancestral Knowledge (shaman), Demonic Embrace (warlock). Blessing of Kings and Spirit of Zandalar count too.
+  - Intellect as attack power: Mental Dexterity (shaman) and Careful Aim (hunter). +10 Intellect then shows the damage a second it adds. Thanks for the suggestion!
+  - Intellect or Spirit as spell power: Mental Quickness (shaman), Champion of the Light (paladin), Natural Instinct (druid, healing), Spiritual Guidance (priest).
+  - Armor: Toughness (paladin) and Bear, Dire Bear and Moonkin Form raise armor from items; Arcane Resilience (mage) turns Intellect into armor.
+  - More health with Survivalist (hunter) and Improved Reincarnation (shaman), more mana with Fel Vitality (warlock).
+  - The numbers come from each talent's description at your rank. A "+10" row says what the ten come to on you ("+11 Strength on you").
+- **Healing before you equip** counts a "damage and healing" item's healing, so swapping one for a +healing item shows the real change. Spell power and healing round to the nearest point instead of dropping the fraction.
+- /statsheet audit saves the talents it found and what they count for.
+
 ## 0.6.3
 
 - **Hit counts your gear's hit rating.** Hit Chance in Caps, the Hit rows (melee, ranged and spell) and everything worked out from them (where your swings, shots and spells go, real DPS, what +1% hit gets you) only counted hit from talents and buffs: a paladin with Precision and 3.9% from gear showed 3%, not 6.9%. They now add the two up as the game's own character sheet does. Thanks for the detailed report!
