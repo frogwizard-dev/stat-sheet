@@ -1,6 +1,6 @@
 # StatSheet
 
-## 0.7.0
+## 0.8.0
 
 - **Tank**, a new choice on the switch for warriors, druids and paladins (warriors get the switch for the first time: Auto, Tank, Melee). Auto picks it in Defensive Stance, Bear Form or with Righteous Fury, and the switch fits all five choices (Auto, Tank, Melee, Caster, Healer) for druids and paladins.
   - The Overview's first tile shows your **avoidance** against a raid boss: the share of its swings that miss or that you dodge or parry, with what you block under it.
@@ -13,6 +13,10 @@
   - A **Healing** block: mana, mp5 from gear, regen resting and while casting, and what your talents add to heals.
   - The Overview's first tile shows bonus healing, and **"What +10 of each gets you"** becomes a healer's: +10 healing and +1% crit on your biggest heal, Intellect, Spirit (with what it gives while casting), mp5 and Stamina.
   - On item tooltips, what the item's healing change does to your biggest heal ("Greater Heal +34 a heal").
+- Shared code (FrogLib 1.17.0): reading a spell's average from its tooltip, and items' tank stats kept once read.
+
+## 0.7.0
+
 - **Your talents count before you equip.** Item tooltips and "What +10 of each gets you" used to treat +10 Strength on an item as +10 on you. They now count the talents, forms and buffs on your character that change what a stat is worth:
   - A stat raised by a share: Divine Strength and Divine Intellect (paladin), Heart of the Wild (druid: Intellect, Strength in Cat Form, Stamina in Bear Form), Living Spirit (druid), Lightning Reflexes (hunter), Arcane Mind (mage), Mental Strength (priest), Toughness and Ancestral Knowledge (shaman), Demonic Embrace (warlock). Blessing of Kings and Spirit of Zandalar count too.
   - Intellect as attack power: Mental Dexterity (shaman) and Careful Aim (hunter). +10 Intellect then shows the damage a second it adds. Thanks for the suggestion!
@@ -22,7 +26,6 @@
   - The numbers come from each talent's description at your rank. A "+10" row says what the ten come to on you ("+11 Strength on you").
 - **Healing before you equip** counts a "damage and healing" item's healing, so swapping one for a +healing item shows the real change. Spell power and healing round to the nearest point instead of dropping the fraction.
 - /statsheet audit saves the talents it found and what they count for.
-- Shared code (FrogLib 1.17.0): reading a spell's average from its tooltip.
 
 ## 0.6.3
 
