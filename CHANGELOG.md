@@ -2,6 +2,17 @@
 
 ## 0.7.0
 
+- **Tank**, a new choice on the switch for warriors, druids and paladins (warriors get the switch for the first time: Auto, Tank, Melee). Auto picks it in Defensive Stance, Bear Form or with Righteous Fury, and the switch fits all five choices (Auto, Tank, Melee, Caster, Healer) for druids and paladins.
+  - The Overview's first tile shows your **avoidance** against a raid boss: the share of its swings that miss or that you dodge or parry, with what you block under it.
+  - **"What +10 of each gets you"** becomes a tank's, against a raid boss: Stamina, Defense (avoidance, fewer crits, and how much more stops boss crits), Agility (dodge and armor), +100 armor (more with Toughness or in Bear Form), Strength (threat and block value) and block value.
+  - On item tooltips, a tank also sees the item's **defense** (and how far short of no boss crits it leaves you), its change to your **avoidance** against a boss, and **block value**; swapping your shield for an off-hand item shows the blocks you'd lose.
+  - The switch remembers your pick per class now, so a warrior's Tank doesn't follow you to your druid. A pick from before stays for each class until you change it there.
+- **Healer**, a new choice on the switch for priests, druids, paladins and shamans (Auto picks it once your +healing passes your spell damage). The Offense tab becomes the **Healing** tab:
+  - Tiles for your **bonus healing** (spell damage and crit under it), **crit on heals** (your heal school's crit plus Tidal Mastery or Holy Specialization, with Holy Power's bigger crits) and **mana regen while casting**, with how much of your resting regen you keep.
+  - **Your heals**: each heal you know at its best rank (Chain Heal, Holy Shock, Penance and Holy Nova included), with your bonus healing and healing talents in (Gift of Nature, Purification, Spiritual Healing, Genesis, Twin Disciplines, and Healing Light, Healing Way, Improved Renew and Improved Rejuvenation on their heals): what it heals, its cast and mana, healing a second (for a heal over time, while it lasts), healing per mana, casts from full mana and how long back-to-back casting lasts before you're dry. A lower rank that heals clearly more per mana gets a line, and a party heal shows the whole party's healing too.
+  - A **Healing** block: mana, mp5 from gear, regen resting and while casting, and what your talents add to heals.
+  - The Overview's first tile shows bonus healing, and **"What +10 of each gets you"** becomes a healer's: +10 healing and +1% crit on your biggest heal, Intellect, Spirit (with what it gives while casting), mp5 and Stamina.
+  - On item tooltips, what the item's healing change does to your biggest heal ("Greater Heal +34 a heal").
 - **Your talents count before you equip.** Item tooltips and "What +10 of each gets you" used to treat +10 Strength on an item as +10 on you. They now count the talents, forms and buffs on your character that change what a stat is worth:
   - A stat raised by a share: Divine Strength and Divine Intellect (paladin), Heart of the Wild (druid: Intellect, Strength in Cat Form, Stamina in Bear Form), Living Spirit (druid), Lightning Reflexes (hunter), Arcane Mind (mage), Mental Strength (priest), Toughness and Ancestral Knowledge (shaman), Demonic Embrace (warlock). Blessing of Kings and Spirit of Zandalar count too.
   - Intellect as attack power: Mental Dexterity (shaman) and Careful Aim (hunter). +10 Intellect then shows the damage a second it adds. Thanks for the suggestion!
@@ -11,6 +22,7 @@
   - The numbers come from each talent's description at your rank. A "+10" row says what the ten come to on you ("+11 Strength on you").
 - **Healing before you equip** counts a "damage and healing" item's healing, so swapping one for a +healing item shows the real change. Spell power and healing round to the nearest point instead of dropping the fraction.
 - /statsheet audit saves the talents it found and what they count for.
+- Shared code (FrogLib 1.17.0): reading a spell's average from its tooltip.
 
 ## 0.6.3
 

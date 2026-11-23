@@ -54,6 +54,12 @@ end
 
 local WAND = 19
 
+local function IsShield(link)
+    local _, _, _, _, _, classID, subclassID = C_Item.GetItemInfoInstant(link)
+    return classID == ((Enum.ItemClass and Enum.ItemClass.Armor) or 4)
+        and subclassID == ((Enum.ItemArmorSubclass and Enum.ItemArmorSubclass.Shield) or 6)
+end
+
 -- The stat on you now and with the item's `change`, which talents and buffs raise by their share.
 local function StatAfter(statIndex, change)
     local _, stat = UnitStat("player", statIndex)
@@ -71,7 +77,9 @@ end
 -- `old` is one link or { [slot] = link } for everything it replaces (a two-hander: both hands).
 local function Changes(newLink, old, slot)
     -- diff.dps: weapon DPS per hand; the off hand hits for half (as the game's own numbers do).
-    local diff, _, _, new = Tank.Diff(newLink, old, slot)
+    -- A tank's also reads defense, dodge, parry and block off the items (their tooltips, for green stats).
+    local tank = ns.TankRole()
+    local diff, _, _, new = Tank.Diff(newLink, old, slot, tank)
     local lines = {}
     local class = Stats.Class()
     -- A druid in cat or bear form fights with its paws: the weapon's own damage doesn't count.
@@ -130,6 +138,39 @@ local function Changes(newLink, old, slot)
         Add("Effective health", ehpNew - ehpNow, "%+d", string.format(" (%+.0f%%)", (ehpNew / ehpNow - 1) * 100))
     end
 
+    -- As a tank, against a raid boss: defense (and how far from boss crits it leaves you), the share of
+    -- swings that miss or are dodged, parried or blocked, and block value (one for every 20 Strength).
+    -- Taking off your shield loses its blocks; putting one on adds its block value (its chance to
+    -- block can't be told before you wear it).
+    if tank then
+        local parries = (Stats.Call(GetParryChance) or 0) > 0
+        local wearsShield = (Stats.Call(GetBlockChance) or 0) > 0
+        local offHand = slot == Tank.OFF or (type(old) == "table" and old[Tank.OFF] ~= nil)
+        local losesShield = wearsShield and offHand and not IsShield(newLink)
+        local gainsShield = not wearsShield and IsShield(newLink)
+        local blocks = wearsShield and not losesShield
+        local defense = diff.defense or 0
+        if defense ~= 0 then
+            local now = Stats.DefenseSkill()
+            local need = FrogLib.Tank.CritCapNeed(3, UnitLevel("player"))
+            local short = now and need - (now + defense)
+            Add("Defense", defense, "%+d", short and (short > 0 and string.format(" (%d short of no boss crits)", short)
+                or " (no boss crits)") or "")
+        end
+        local perDodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agilityNow)
+        local avoid = defense * 0.04 * (2 + (parries and 1 or 0) + (blocks and 1 or 0))
+            + (diff.dodge or 0) + (parries and (diff.parry or 0) or 0) + (blocks and (diff.blockChance or 0) or 0)
+            + (agilityNew - agilityNow) * perDodge
+        if losesShield then avoid = avoid - Stats.IncomingTable(3).block end
+        Add("Avoidance (boss)", avoid, "%+.2f", "%")
+        local fromStrength = math.floor(strengthNew / 20) - math.floor(strengthNow / 20)
+        if losesShield then
+            Add("Block value", -(Stats.Call(GetShieldBlock) or 0), "%+d", " (no shield)")
+        elseif blocks or gainsShield then
+            Add("Block value", (diff.blockValue or 0) + fromStrength, "%+d")
+        end
+    end
+
     -- Spell power and healing: the item's, and Spirit's and Intellect's shares (Spiritual Guidance,
     -- Mental Quickness, Champion of the Light, Natural Instinct).
     local spiritNow, spiritNew = StatAfter(5, diff.spi)
@@ -143,6 +184,9 @@ local function Changes(newLink, old, slot)
     Add("Spell power", spellChange, "%+d")
     -- Healing gets its own line when it moves differently from spell power (+healing gear).
     if math.floor(healChange + 0.5) ~= math.floor(spellChange + 0.5) then Add("Healing", healChange, "%+d") end
+    -- As a healer: what that does to your biggest heal.
+    local main = math.floor(healChange + 0.5) ~= 0 and ns.Healer() and ns.Healing.Main()
+    if main then Add(main.name, healChange * main.perBonus, "%+d", " a heal") end
     if Stats.UsesMana() then
         local first = INTELLECT_BREAK or 20
         local function Mana(intellect)

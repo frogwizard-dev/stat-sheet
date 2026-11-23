@@ -16,6 +16,8 @@ Regen.lua
 Incoming.lua
 Stats.lua
 Talents.lua
+HealData.lua
+Healing.lua
 Tabs.lua
 Tracker.lua
 Compare.lua

@@ -257,11 +257,19 @@ end
 -- Widgets (pooled; each layout reuses them in order)
 ------------------------------------------------------------------------------
 
+-- A tab's title; a function's (the Offense tab is Healing as a healer) can't be read while the game
+-- hides your mana, and then the plain one stands.
+local function TabTitle(tab)
+    if type(tab.title) ~= "function" then return tab.title end
+    local ok, title = pcall(tab.title)
+    return ok and title or (tab.key:gsub("^%l", string.upper))
+end
+
 local MAKERS = {}
 
--- The switch's names. Which three you get is ns.Roles, and what Auto picks is ns.WorthRole (Tabs.lua).
-local ROLE_NAMES = { auto = "Auto", melee = "Melee", ranged = "Ranged", caster = "Caster" }
-local ROLE_BUTTONS = 3
+-- The switch's names. Which you get (three to five) is ns.Roles, and what Auto picks is ns.WorthRole (Tabs.lua).
+local ROLE_NAMES = { auto = "Auto", tank = "Tank", melee = "Melee", ranged = "Ranged", caster = "Caster", healer = "Healer" }
+local ROLE_BUTTONS = 5
 
 -- One switch button: the choice lit, and under Auto what it picked lit faintly. The buttons sit
 -- edge to edge inside one outline, as a segmented control.
@@ -289,7 +297,7 @@ local function RoleButtons(parent)
         button.text = Text(button)
         button.text:SetPoint("CENTER")
         button:SetScript("OnClick", function(self)
-            ns.db.role = self.role
+            ns.SetRole(self.role)
             Panel:Layout()
         end)
         buttons[i] = button
@@ -600,7 +608,7 @@ function Panel:LayTabs(context)
         for i, button in ipairs(self.tabs) do
             local tab = ns.Tabs[i]
             SetFont(button.text, tab == current and context.fonts.bold or context.fonts.body, size)
-            button.text:SetText(tab.title)
+            button.text:SetText(TabTitle(tab))
             total = total + button.text:GetStringWidth() + pad
         end
         if room <= 0 or total <= room then break end
@@ -1403,12 +1411,25 @@ function LAYOUTS.role(self, block, y, context)
     SetColor(bar.label, look.label)
     local gold = { SectionColor("Insights") }
     local x, pixel = 0, context.pixel
-    for i = #bar.buttons, 1, -1 do
+    for i = #roles + 1, #bar.buttons do bar.buttons[i]:Hide() end
+    -- Five choices may not fit a narrow panel: tighter padding, then smaller text, until they do.
+    local textSize, pad = size - 1, 18
+    for _ = 1, 6 do
+        local total = 2 * pixel
+        for i = 1, #roles do
+            local button = bar.buttons[i]
+            SetFont(button.text, context.fonts.bold, textSize)
+            button.text:SetText(ROLE_NAMES[roles[i]])
+            total = total + button.text:GetStringWidth() + pad
+        end
+        if total <= context.inner then break end
+        if pad > 8 then pad = pad - 5 else textSize = textSize - 1 end
+    end
+    for i = #roles, 1, -1 do
         local button = bar.buttons[i]
+        button:Show()
         button.role = roles[i]
-        SetFont(button.text, context.fonts.bold, size - 1)
-        button.text:SetText(ROLE_NAMES[button.role])
-        local width = button.text:GetStringWidth() + 18
+        local width = button.text:GetStringWidth() + pad
         button:SetSize(width, height - 2 * pixel)
         button:ClearAllPoints()
         button:SetPoint("TOPRIGHT", bar.group, "TOPRIGHT", -(x + pixel), -pixel)

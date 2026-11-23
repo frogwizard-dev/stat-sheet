@@ -23,19 +23,29 @@ local issecret = FrogLib.issecret
 -- same in that form; spiritDamage / spiritHeal, intDamage / intHeal = that share of Spirit /
 -- Intellect as spell damage / healing; intAP / intRAP = that share of Intellect as melee / ranged
 -- attack power; intArmor = that share of Intellect as armor; itemArmor, health, mana = armor from
--- items, maximum health, maximum mana up by that share.
+-- items, maximum health, maximum mana up by that share; heal, healPeriodic, healInstant = all your
+-- healing, healing over time, instant heals up by that share; healCrit = that much more crit on heals;
+-- spellHeal / spellCrit = the same for the heals in `on` (their first ranks' spells, matched by name);
+-- critBonus = a heal's crit bonus (half as much again) up by that share.
 local TALENTS = {
     PALADIN = {
         { spell = 20262, stats = { [1] = 1 } },                -- Divine Strength
         { spell = 20257, stats = { [4] = 1 } },                -- Divine Intellect
         { spell = 20143, itemArmor = 1 },                      -- Toughness
         { spell = 1311084, intDamage = 1 },                    -- Champion of the Light
+        -- Healing Light: Holy Light, Flash of Light, Holy Shock.
+        { spell = 20237, spellHeal = 1, on = { 635, 19750, 20473 } },
+        { spell = 5923, critBonus = 1 },                       -- Holy Power
     },
     DRUID = {
         -- Heart of the Wild: Intellect; Stamina in Bear Form, Strength in Cat Form.
         { spell = 17003, stats = { [4] = 1 }, bear = { [3] = 2 }, cat = { [1] = 3 } },
         { spell = 1309631, stats = { [5] = 1 } },              -- Living Spirit
         { spell = 1223242, intHeal = 2 },                      -- Natural Instinct (melee crit first)
+        { spell = 17104, heal = 1 },                           -- Gift of Nature
+        { spell = 1223081, healPeriodic = 1 },                 -- Genesis
+        { spell = 17111, spellHeal = 1, on = { 774 } },        -- Improved Rejuvenation
+        { spell = 17074, spellCrit = 1, on = { 8936 } },       -- Improved Regrowth
     },
     HUNTER = {
         { spell = 19168, stats = { [2] = 1 } },                -- Lightning Reflexes
@@ -49,6 +59,10 @@ local TALENTS = {
     PRIEST = {
         { spell = 18551, stats = { [4] = 1 } },                -- Mental Strength
         { spell = 14901, spiritHeal = 1, spiritDamage = 2 },   -- Spiritual Guidance
+        { spell = 1225132, healInstant = 1 },                  -- Twin Disciplines
+        { spell = 14898, heal = 1 },                           -- Spiritual Healing
+        { spell = 14889, healCrit = 1 },                       -- Holy Specialization (every priest heal is Holy)
+        { spell = 14908, spellHeal = 1, on = { 139 } },        -- Improved Renew
     },
     SHAMAN = {
         { spell = 16252, stats = { [3] = 1 } },                -- Toughness
@@ -56,6 +70,9 @@ local TALENTS = {
         { spell = 16184, health = 1 },                         -- Improved Reincarnation
         { spell = 415140, intAP = 1 },                         -- Mental Dexterity
         { spell = 30812, intDamage = 1, intHeal = 1 },         -- Mental Quickness
+        { spell = 16178, heal = 1 },                           -- Purification
+        { spell = 16194, healCrit = 1 },                       -- Tidal Mastery
+        { spell = 29206, spellHeal = 1, on = { 331 } },        -- Healing Way (Healing Wave)
     },
     WARLOCK = {
         { spell = 18697, stats = { [3] = 1 } },                -- Demonic Embrace
@@ -332,6 +349,43 @@ end
 -- Intellect counted as armor: the share of Intellect (a fraction).
 function Talents.IntToArmor() return Sum("intArmor") end
 
+-- If a talent's `on` list holds the heal named `name`.
+local function On(entry, name)
+    if not (entry.on and name) then return false end
+    if not entry.onNames then
+        entry.onNames = {}
+        for _, spellID in ipairs(entry.on) do
+            local onName = Text(Ask(C_Spell and C_Spell.GetSpellName, spellID))
+            if onName then entry.onNames[onName] = true end
+        end
+    end
+    return entry.onNames[name] == true
+end
+
+-- What a heal comes to with your healing talents: all of it (Gift of Nature, Purification, Spiritual
+-- Healing; Healing Light and the like for the heal named `name`), its part over time (Genesis) and,
+-- `instant`, an instant heal (Twin Disciplines); and the crit chance they add to heals (Tidal Mastery,
+-- Holy Specialization, Improved Regrowth for its heal), in percent.
+function Talents.HealScale(instant, name)
+    local scale = Product("heal")
+    if instant then scale = scale * Product("healInstant") end
+    for entry, state in pairs(Taken()) do
+        if entry.spellHeal and On(entry, name) then scale = scale * (1 + Share(state.shares, entry.spellHeal) / 100) end
+    end
+    return scale, Product("healPeriodic")
+end
+
+function Talents.HealCrit(name)
+    local crit = Sum("healCrit")
+    for entry, state in pairs(Taken()) do
+        if entry.spellCrit and On(entry, name) then crit = crit + Share(state.shares, entry.spellCrit) / 100 end
+    end
+    return crit * 100
+end
+
+-- What a heal's crit adds: half as much again, more with Holy Power.
+function Talents.CritBonus() return 0.5 * (1 + Sum("critBonus")) end
+
 -- What one point of maximum health / mana (from Stamina / Intellect) comes to (Survivalist 5/5: 1.1).
 function Talents.HealthScale() return Product("health") end
 function Talents.ManaScale() return Product("mana") end
@@ -367,6 +421,7 @@ function Talents.Report()
         spiritDamage = spiritDamage, spiritHeal = spiritHeal, intDamage = intDamage, intHeal = intHeal,
         intAP = intAP, intRAP = intRAP, intArmor = Talents.IntToArmor(),
         itemArmor = Talents.ItemArmorScale(), health = Talents.HealthScale(), mana = Talents.ManaScale(),
+        heal = Talents.HealScale(), healPeriodic = select(2, Talents.HealScale()), healCrit = Talents.HealCrit(),
     }
     return report
 end

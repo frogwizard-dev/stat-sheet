@@ -1,8 +1,8 @@
 local _, ns = ...
 
 -- The tabs and what's on each: blocks the panel lays out top to bottom (tiles, a section of cells,
--- stacked bars, "what +10 gets you", chips, change cards, icon entries, the Melee / Ranged / Caster
--- switch). A tab's blocks can be a function, for tabs that change with the switch. Everything reads
+-- stacked bars, "what +10 gets you", chips, change cards, icon entries, the Tank / Melee / Ranged /
+-- Caster / Healer switch). A tab's blocks can be a function, for tabs that change with the switch. Everything reads
 -- through ns.Stats (Stats.lua), so secret values in combat keep the last reading.
 
 local Stats, Section = ns.Stats, ns.SectionByKey
@@ -41,9 +41,38 @@ local function Caster() return ns.WorthRole() == "caster" and Stats.UsesMana() e
 function ns.Ranged() return ns.WorthRole() == "ranged" and Stats.HasRangedWeapon() end
 local Ranged = ns.Ranged
 
+-- As a healer: the switch's Healer (priests, druids, paladins and shamans), with mana.
+local Healing = ns.Healing
+local function Healer() return ns.WorthRole() == "healer" and Stats.UsesMana() and Healing.Heals() end
+ns.Healer = Healer
+
+-- As a tank: the switch's Tank (warriors, druids and paladins).
+local TANKS = { WARRIOR = true, DRUID = true, PALADIN = true }
+local function TankRole() return ns.WorthRole() == "tank" and TANKS[Stats.Class()] == true end
+ns.TankRole = TankRole
+
+-- What a boss three levels up's swings do: the share that misses or is dodged or parried, and blocked.
+local function BossAvoid()
+    local incoming = Stats.IncomingTable(3)
+    return incoming.miss + incoming.dodge + incoming.parry, incoming.block, incoming
+end
+
 local damageTile = {
-    caption = function() return Caster() and "SPELL POWER" or "REAL DPS" end, colorKey = "Attack",
+    caption = function()
+        if TankRole() then return "AVOIDANCE" end
+        if Healer() then return "HEALING" end
+        return Caster() and "SPELL POWER" or "REAL DPS"
+    end, colorKey = "Attack",
     get = function()
+        if TankRole() then
+            local avoid, block = BossAvoid()
+            return Percent(avoid), false, block > 0 and string.format("+%s blocked, vs a boss", Percent(block))
+                or "of a boss's swings"
+        end
+        if Healer() then
+            return "+" .. Number(Healing.Bonus()), false, string.format("+%s spell damage · %s crit",
+                Number(Stats.BestSchool(GetSpellBonusDamage)), Percent(Healing.Crit()))
+        end
         if Caster() then
             -- Healing joins the line under it when +healing gear takes it past spell damage (one school's
             -- gear leaves healing below that school, which is no reason to show it).
@@ -62,7 +91,13 @@ local damageTile = {
         return string.format("%.1f", paper * share), false, string.format("%.1f on paper", paper)
     end,
     tip = function(tooltip)
-        if Caster() then
+        if TankRole() then
+            Line(tooltip, "The share of a raid boss's swings (three levels up) that miss you or that you dodge or "
+                .. "parry, with what you block under it. The Defense tab has the whole table.")
+        elseif Healer() then
+            Line(tooltip, "Bonus healing on your heals, with your spell damage and crit on heals under it. "
+                .. "The Healing tab shows what each of your heals comes to.")
+        elseif Caster() then
             Line(tooltip, "Bonus damage on your spells, with your bonus healing under it when that's higher. "
                 .. "Switch to Melee to see your real DPS.")
         elseif Ranged() then
@@ -275,24 +310,28 @@ end
 
 local SPIRIT_QUARTER = { PRIEST = true, MAGE = true }
 
+-- +10 Spirit, or nil with no regen. As a healer, also what it adds while casting.
+local function SpiritRow(healer)
+    local regen = Known((GetManaRegen()))
+    if regen <= 0 then return nil end
+    -- Classic's rule: each point of Spirit adds 1/4 mana a tick (every 2 s) for priests and
+    -- mages, 1/5 for the rest; the regen also has a fixed part, so the average overstates it.
+    local perTick = SPIRIT_QUARTER[Stats.Class()] and 0.25 or 0.2
+    local points, onYou = TenOnYou(5, "Spirit")
+    local mp5 = points * perTick * 5 / 2
+    -- Spiritual Guidance: a share of Spirit as spell damage and healing.
+    local spiritDamage, spiritHeal = Talents.SpiritToSpell()
+    local spell = SpellText(spiritDamage, spiritHeal, points)
+    local kept = healer and Healing.SpiritKept() or 0 -- Meditation and the like
+    local casting = kept * mp5 >= 0.05 and string.format(" · +%s while casting", OneDecimal(kept * mp5)) or ""
+    return { stat = "+10 Spirit", headline = string.format("+%s mp5", OneDecimal(mp5)), colorKey = "Secondary Stats",
+        gain = mp5 / (regen * 5), detail = onYou .. string.format("%d%% faster mana regen while not casting",
+            mp5 / (regen * 5) * 100 + 0.5) .. casting .. spell }
+end
+
 local function CasterWorth()
     local rows = { IntellectRow() }
-
-    local regen = Known((GetManaRegen()))
-    if regen > 0 then
-        -- Classic's rule: each point of Spirit adds 1/4 mana a tick (every 2 s) for priests and
-        -- mages, 1/5 for the rest; the regen also has a fixed part, so the average overstates it.
-        local perTick = SPIRIT_QUARTER[Stats.Class()] and 0.25 or 0.2
-        local points, onYou = TenOnYou(5, "Spirit")
-        local mp5 = points * perTick * 5 / 2
-        -- Spiritual Guidance: a share of Spirit as spell damage and healing.
-        local spiritDamage, spiritHeal = Talents.SpiritToSpell()
-        local spell = SpellText(spiritDamage, spiritHeal, points)
-        rows[#rows + 1] = { stat = "+10 Spirit", headline = string.format("+%s mp5", OneDecimal(mp5)), colorKey = "Secondary Stats",
-            gain = mp5 / (regen * 5), detail = onYou .. string.format("%d%% faster mana regen while not casting",
-                mp5 / (regen * 5) * 100 + 0.5) .. spell }
-    end
-
+    rows[#rows + 1] = SpiritRow(false)
     rows[#rows + 1] = StaminaRow()
 
     rows[#rows + 1] = { stat = "+10 Spell Power", headline = "+10 per spell", colorKey = "Secondary Stats",
@@ -300,45 +339,193 @@ local function CasterWorth()
     return rows
 end
 
+-- A tank's, against a raid boss: Stamina, defense, Agility, armor, Strength and block value. Avoidance
+-- rows count as the share fewer swings that land; armor and health as effective health.
+local function TankWorth()
+    local rows = { StaminaRow() }
+    local avoid, block, incoming = BossAvoid()
+    local landing = math.max(1, 100 - avoid)
+    local parries, blocks = incoming.parry > 0, Known(GetBlockChance()) > 0
+    local level = UnitLevel("player")
+
+    -- Defense: 0.04% a point off misses, dodges, parries and blocks each, and off crits.
+    local each = 10 * 0.04
+    local defenseAvoid = each * (2 + (parries and 1 or 0) + (blocks and 1 or 0))
+    local defense, need = Stats.DefenseSkill(), FrogLib.Tank.CritCapNeed(3, level)
+    local cap = ""
+    if defense then
+        cap = defense >= need and " · boss crits gone already" or string.format(" · %d more stops boss crits", need - defense)
+    end
+    local fewerCrits = (defense and defense < need) and each or 0 -- a crit is a second hit's worth
+    rows[#rows + 1] = { stat = "+10 Defense", headline = string.format("+%s%% avoid", OneDecimal(defenseAvoid)),
+        colorKey = "Defense", gain = (defenseAvoid + fewerCrits) / landing,
+        detail = string.format("+%s each of miss, dodge%s%s · %s fewer crits%s", Percent(each),
+            parries and ", parry" or "", blocks and ", block" or "", Percent(each), cap) }
+
+    -- Agility: dodge and 2 armor a point.
+    local ehpNow = Stats.ArmorReduction(Stats.ArmorNow(), 3)
+    local function EHPGain(extraArmor)
+        local after = Stats.ArmorReduction(Stats.ArmorNow() + extraArmor, 3)
+        return (1 - ehpNow) / (1 - after) - 1
+    end
+    local agility = StatValue(2)
+    local points, onYou = TenOnYou(2, "Agility")
+    local dodge = (Stats.Call(GetDodgeChanceFromAttribute) or 0) * 100 / math.max(1, agility) * points
+    local agilityArmor = EHPGain(points * 2)
+    rows[#rows + 1] = { stat = "+10 Agility", headline = string.format("+%s%% dodge", OneDecimal(dodge)), colorKey = "Defense",
+        gain = dodge / landing + agilityArmor, detail = onYou .. string.format("+%d armor · %s%% more effective health",
+            points * 2 + 0.5, OneDecimal(agilityArmor * 100)) }
+
+    -- Armor on an item (more with Toughness or in Bear Form).
+    local armor = 100 * Talents.ItemArmorScale()
+    local armorGain = EHPGain(armor)
+    rows[#rows + 1] = { stat = "+100 Armor", headline = string.format("+%s%% EHP", OneDecimal(armorGain * 100)),
+        colorKey = "Defense", gain = armorGain,
+        detail = string.format("%s armor on you · a boss's hits lose %s instead of %s", Number(math.floor(armor + 0.5)),
+            Percent(Stats.ArmorReduction(Stats.ArmorNow() + armor, 3) * 100), Percent(ehpNow * 100)) }
+
+    -- Strength: attack power for threat, and block value with a shield (1 for every 20).
+    local strength = StatValue(1)
+    local strengthPoints, strengthOnYou = TenOnYou(1, "Strength")
+    local attackPower = (Stats.StatAP(1, strength + strengthPoints) or 0) - (Stats.StatAP(1, strength) or 0)
+    local blockValue = blocks and math.floor((strength + strengthPoints) / 20) - math.floor(strength / 20) or 0
+    rows[#rows + 1] = { stat = "+10 Strength", headline = string.format("+%d AP", attackPower + 0.5), colorKey = "Attack",
+        detail = strengthOnYou .. "more threat from every attack" .. (blockValue > 0 and string.format(" · +%d block value",
+            blockValue) or "") }
+
+    if blocks then
+        rows[#rows + 1] = { stat = "+10 Block Value", headline = "+10 off each block", colorKey = "Defense",
+            detail = string.format("%s of a boss's swings are blocked", Percent(block)) }
+    end
+    return rows
+end
+
+-- A healer's: bonus healing and crit on your biggest heal, Intellect, Spirit (and what it gives while
+-- casting), mp5 (which keeps coming while you cast) and Stamina.
+local function HealerWorth()
+    local rows = {}
+    local main = Healing.Main()
+    if main then
+        local gain = main.perBonus * 10
+        rows[#rows + 1] = { stat = "+10 Healing", headline = string.format("+%d a heal", gain + 0.5), colorKey = "Secondary Stats",
+            gain = gain / main.average, detail = string.format("on your %s: %d%% more · +%s a second", main.name,
+                gain / main.average * 100 + 0.5, OneDecimal(gain / math.max(main.cast, 1.5))) }
+        local crit = Healing.CritShare(main, 1)
+        if crit >= 0.5 then
+            rows[#rows + 1] = { stat = "+1% Crit", headline = string.format("+%d a heal", crit + 0.5), colorKey = "Secondary Stats",
+                gain = crit / main.average, detail = string.format("on your %s: 1 more crit in every 100 heals, "
+                    .. "which heal %d%% more", main.name, Talents.CritBonus() * 100 + 0.5) }
+        end
+    end
+    rows[#rows + 1] = IntellectRow()
+    rows[#rows + 1] = SpiritRow(true)
+    local _, casting = Healing.Regen()
+    if casting > 0 then
+        rows[#rows + 1] = { stat = "+10 MP5", headline = "+10 mp5", colorKey = "Secondary Stats",
+            gain = 10 / (casting * 5), detail = string.format("%d%% faster mana regen while casting · +%d mana in a "
+                .. "5-minute fight", 10 / (casting * 5) * 100 + 0.5, 600) }
+    else
+        rows[#rows + 1] = { stat = "+10 MP5", headline = "+10 mp5", colorKey = "Secondary Stats",
+            detail = "keeps coming while you cast: +600 mana in a 5-minute fight" }
+    end
+    rows[#rows + 1] = StaminaRow()
+    return rows
+end
+
 -- Auto: mages, priests and warlocks cast, hunters shoot, warriors and rogues melee, a druid melees in
--- cat or bear form, and a shaman or paladin casts once their best school's bonus passes half their AP.
+-- cat form, and a shaman or paladin casts once their best school's bonus passes half their AP. A
+-- priest, druid, paladin or shaman who'd cast heals once their +healing passes their spell damage. A
+-- warrior in Defensive Stance, a druid in Bear Form and a paladin with Righteous Fury tank.
 local CAT_BEAR = { [1] = true, [5] = true, [8] = true }
+local BEAR = { [5] = true, [8] = true }
 local lastAuto
+
+-- Caster, or Healer when +healing gear takes healing past spell damage.
+local function CasterOrHealer()
+    local healing = GetSpellBonusHealing and Known(GetSpellBonusHealing()) or 0
+    return healing > Stats.BestSchool(GetSpellBonusDamage) and "healer" or "caster"
+end
+
+-- Tanking: Defensive Stance, Righteous Fury (Bear Form below).
+local DEFENSIVE_STANCE, RIGHTEOUS_FURY = 71, { 25780, 407627, 407628 }
+
+-- If you have Righteous Fury. The game hides auras in combat, and a hidden one reads as missing, so
+-- that's asked first: then this can't tell (raises), and Auto keeps its last answer.
+local function HasFury()
+    local Hidden = C_Secrets and C_Secrets.ShouldSpellAuraBeSecret
+    for _, spellID in ipairs(RIGHTEOUS_FURY) do
+        if Hidden then
+            local ok, hidden = pcall(Hidden, spellID)
+            if ok and (FrogLib.issecret(hidden) or hidden == true) then error("unreadable", 0) end
+        end
+        if HasBuff(spellID) then return true end
+    end
+    return false
+end
+
+local function StanceSpell()
+    local form = GetShapeshiftForm and GetShapeshiftForm() or 0
+    if form == 0 or not GetShapeshiftFormInfo then return nil end
+    return select(4, GetShapeshiftFormInfo(form))
+end
 
 local function AutoRole()
     local class = Stats.Class()
+    if class == "WARRIOR" then return StanceSpell() == DEFENSIVE_STANCE and "tank" or "melee" end
+    if class == "PALADIN" and HasFury() then return "tank" end
+    if class == "PRIEST" then return CasterOrHealer() end
     if CASTERS[class] then return "caster" end
     if class == "HUNTER" then return Stats.HasRangedWeapon() and "ranged" or "melee" end
     if class == "DRUID" then
         local id = GetShapeshiftFormID and GetShapeshiftFormID()
-        if id == nil and GetShapeshiftFormID then return "caster" end
-        if id ~= nil then return CAT_BEAR[Known(id)] and "melee" or "caster" end
-        return (GetShapeshiftForm() or 0) == 0 and "caster" or "melee"
+        if id == nil and GetShapeshiftFormID then return CasterOrHealer() end
+        if id ~= nil then
+            id = Known(id)
+            if BEAR[id] then return "tank" end
+            return CAT_BEAR[id] and "melee" or CasterOrHealer()
+        end
+        if Stats.DisplayPower() == 1 then return "tank" end
+        return (GetShapeshiftForm() or 0) == 0 and CasterOrHealer() or "melee"
     end
     if class == "SHAMAN" or class == "PALADIN" then
         -- Spell damage or +healing, whichever is bigger: a healer casts too.
         local healing = GetSpellBonusHealing and Known(GetSpellBonusHealing()) or 0
         local spellPower = math.max(Stats.BestSchool(GetSpellBonusDamage), healing)
-        return spellPower > Stats.MeleeAP() / 2 and "caster" or "melee"
+        return spellPower > Stats.MeleeAP() / 2 and CasterOrHealer() or "melee"
     end
     return "melee"
 end
 
--- The switch's choices: Ranged for hunters, Caster for anyone else with mana, none for the rest.
+-- The switch's choices: Tank for warriors, druids and paladins, Ranged for hunters, Caster for anyone
+-- else with mana, Healer too for the classes that heal (a priest has no use for Melee), none for rogues.
 local HUNTER_ROLES, CASTER_ROLES = { "auto", "melee", "ranged" }, { "auto", "melee", "caster" }
+local PRIEST_ROLES, HYBRID_ROLES = { "auto", "caster", "healer" }, { "auto", "melee", "caster", "healer" }
+local WARRIOR_ROLES, TANK_HYBRID_ROLES = { "auto", "tank", "melee" }, { "auto", "tank", "melee", "caster", "healer" }
 
 function ns.Roles()
-    if Stats.Class() == "HUNTER" then return HUNTER_ROLES end
-    if Stats.UsesMana() then return CASTER_ROLES end
+    local class = Stats.Class()
+    if class == "HUNTER" then return HUNTER_ROLES end
+    if class == "WARRIOR" then return WARRIOR_ROLES end
+    if class == "DRUID" or class == "PALADIN" then return TANK_HYBRID_ROLES end
+    if not Stats.UsesMana() then return nil end
+    if class == "PRIEST" then return PRIEST_ROLES end
+    if Healing.Heals() then return HYBRID_ROLES end
+    return CASTER_ROLES
 end
 
--- What's picked on the switch: one of your choices (the setting is shared by your characters),
--- else Auto.
+-- What's picked on the switch: one of your choices (kept per class, so your characters of a class
+-- share it; before 0.7.0 one choice for everyone, which a class without its own still goes by), else Auto.
 function ns.RoleChoice()
+    local picked = ns.db.roles and ns.db.roles[Stats.Class()] or ns.db.role
     for _, role in ipairs(ns.Roles() or {}) do
-        if role ~= "auto" and role == ns.db.role then return role end
+        if role ~= "auto" and role == picked then return role end
     end
     return "auto"
+end
+
+function ns.SetRole(role)
+    ns.db.roles = ns.db.roles or {}
+    ns.db.roles[Stats.Class()] = role
 end
 
 -- Which list to show: the switch's pick, else Auto's (its last answer while it can't be read, in
@@ -352,6 +539,8 @@ function ns.WorthRole()
 end
 
 function ns.Worth()
+    if TankRole() then return TankWorth() end
+    if Healer() then return HealerWorth() end
     if Caster() then return CasterWorth() end
     if Ranged() then return RangedWorth() end
     return MeleeWorth()
@@ -1279,6 +1468,120 @@ end }
 local castsFromFull = { kind = "entries", key = "casts", title = "Casts from full mana", colorKey = "Secondary Stats",
     items = SpellEntries, empty = "No spells that cost mana yet." }
 
+------------------------------------------------------------------------------
+-- Healing: as a healer, the Offense tab becomes the Healing tab
+------------------------------------------------------------------------------
+
+local function Mp5(perSecond) return OneDecimal(perSecond * 5) end
+
+local function GearMp5()
+    local gear = Stats.GearTotals()
+    return (gear.ITEM_MOD_MANA_REGENERATION_SHORT or 0) + (gear.ITEM_MOD_POWER_REGEN0_SHORT or 0)
+end
+
+local healerTiles = {
+    damageTile,
+    { caption = "HEAL CRIT", colorKey = "Secondary Stats", get = function()
+        return Percent(Healing.Crit()), false, string.format("crits heal %d%% more", Talents.CritBonus() * 100 + 0.5)
+    end, tip = function(tooltip)
+        Line(tooltip, "The chance your heals crit (heals over time don't). Your heal school's spell crit, plus "
+            .. "talents that add crit to heals (Tidal Mastery, Holy Specialization); Holy Power makes crits bigger.")
+    end },
+    { caption = "WHILE CASTING", colorKey = "Secondary Stats", get = function()
+        local resting, casting, kept = Healing.Regen()
+        return Mp5(casting), false, string.format("mp5 · %d%% of %s resting", kept * 100 + 0.5, Mp5(resting))
+    end, tip = function(tooltip)
+        Line(tooltip, "The mana that keeps coming while you cast (within 5 seconds of your last spell): mp5 from gear "
+            .. "and buffs, and Spirit's share that talents let you keep. Resting regen starts 5 seconds after your last cast.")
+    end },
+}
+
+local healing = {
+    key = "healing", title = "Healing", colorKey = "Secondary Stats",
+    show = function() return Healing.Heals() and Stats.UsesMana() end,
+    cells = {
+        { label = "Bonus Healing", get = function()
+            local bonus = Healing.Bonus()
+            return "+" .. Number(bonus), bonus == 0
+        end },
+        { label = "Heal Crit", get = function() return Percent(Healing.Crit()) end },
+        { label = "Mana", get = function() return Number(UnitPowerMax("player", 0)) end },
+        { label = "MP5 from Gear", get = function()
+            local mp5 = GearMp5()
+            return "+" .. Number(mp5), mp5 == 0
+        end, tip = function(tooltip)
+            Line(tooltip, "Mana every 5 seconds from your items, which keeps coming while you cast. Enchants "
+                .. "and buffs (Blessing of Wisdom, Mana Spring) aren't included.")
+        end },
+        { label = "Regen", wide = true, get = function()
+            local resting, casting, kept = Healing.Regen()
+            return string.format("%s mp5 resting · %s while casting (%d%%)", Mp5(resting), Mp5(casting), kept * 100 + 0.5)
+        end },
+        { label = "Talents", wide = true, get = function()
+            local scale, periodic = Talents.HealScale(false)
+            local instant = Talents.HealScale(true) / scale
+            local parts = {}
+            if scale > 1.0005 then parts[#parts + 1] = string.format("+%s%% healing", OneDecimal((scale - 1) * 100)) end
+            if periodic > 1.0005 then parts[#parts + 1] = string.format("+%s%% over time", OneDecimal((periodic - 1) * 100)) end
+            if instant > 1.0005 then parts[#parts + 1] = string.format("+%s%% instant", OneDecimal((instant - 1) * 100)) end
+            if #parts == 0 then return false end
+            return table.concat(parts, " · ")
+        end, tip = function(tooltip)
+            Line(tooltip, "What your talents add to all your heals (Gift of Nature, Purification, Spiritual Healing, "
+                .. "Genesis, Twin Disciplines). Your heals below count them, and the ones for a single heal (Healing "
+                .. "Light, Improved Renew, Healing Way); the game's own spell tooltips don't.")
+        end },
+    },
+}
+Section.healing = healing
+
+local function Duration(seconds)
+    if seconds >= 60 then return string.format("%dm %02ds", seconds / 60, seconds % 60) end
+    return string.format("%ds", seconds + 0.5)
+end
+
+local PARTY = 5
+
+-- Each heal: what it heals, and how fast and how cheaply. A heal over time's speed is its healing a
+-- second while it lasts; anything else's, per second of casting (instants take the 1.5 s global
+-- cooldown). A party heal's numbers are for each one it reaches, with the whole party's after.
+local function HealEntries()
+    local entries = {}
+    for _, heal in ipairs(Healing.List()) do
+        local cast = heal.cast > 0 and string.format("%.1fs cast", heal.cast) or "instant"
+        local overTime = heal.seconds and heal.seconds > 0 and heal.overTime >= heal.average * 0.99
+        if heal.seconds and heal.overTime > 0 then cast = cast .. string.format(", over %ds", heal.seconds) end
+        local speed = overTime and string.format("%s a second for %ds", Number(math.floor(heal.average / heal.seconds + 0.5)),
+            heal.seconds) or string.format("%s a second cast", Number(math.floor(heal.perSecond + 0.5)))
+        local each = heal.group and " each" or ""
+        local lines = {
+            { text = string.format("%s%s · %d mana", heal.rank and heal.rank ~= "" and (heal.rank .. " · ") or "", cast,
+                heal.cost), dim = true },
+            { text = speed .. each .. (heal.perMana and string.format(" · %.2f per mana%s", heal.perMana, each) or "") },
+        }
+        if heal.casts then
+            lines[#lines + 1] = { text = string.format("%d casts from full · %s", heal.casts,
+                heal.dry and ("dry in " .. Duration(heal.dry) .. " back to back") or "never runs dry"), dim = true }
+        end
+        if heal.jumps then lines[#lines + 1] = { text = "the first target's: it jumps on to others for less", dim = true } end
+        if heal.group then
+            lines[#lines + 1] = { text = string.format("heals each one in your party: %s a cast on a full party of %d",
+                Number(math.floor(heal.average * PARTY + 0.5)), PARTY), dim = true }
+        end
+        if heal.cheaper then
+            lines[#lines + 1] = { text = string.format("%s heals more per mana: %.2f (%s a heal)", heal.cheaper.rank,
+                heal.cheaper.perMana, Number(math.floor(heal.cheaper.average + 0.5))), dim = true }
+        end
+        entries[#entries + 1] = { icon = heal.icon, title = heal.name,
+            right = Number(math.floor(heal.average + 0.5)), lines = lines }
+    end
+    return entries
+end
+
+local yourHeals = { kind = "entries", key = "heals", title = "Your heals", colorKey = "Secondary Stats",
+    items = HealEntries, empty = Healing.Readable() and "No heals learned yet."
+        or "Your heals are read from the game's English tooltips, so this client's can't be shown." }
+
 local roleSwitch = { kind = "role" }
 
 -- Your pet: its health, damage and happiness as tiles under the "Pet" header, the rest of its rows
@@ -1319,6 +1622,18 @@ local function CapsSkip(skip)
 end
 
 local function OffenseBlocks()
+    if Healer() then
+        return {
+            roleSwitch,
+            { kind = "tiles", tiles = healerTiles },
+            -- The tiles show bonus healing, crit on heals and regen while casting.
+            { kind = "section", section = healing, skip = { ["Bonus Healing"] = true, ["Heal Crit"] = true } },
+            yourHeals,
+            { kind = "section", section = Section.spell, skip = { Healing = true, ["Mana Regen"] = true } },
+            { kind = "section", section = Section.ranged },
+            { kind = "section", section = Section.melee },
+        }
+    end
     if Caster() then
         return {
             roleSwitch,
@@ -1495,7 +1810,7 @@ ns.Tabs = {
         },
     },
     {
-        key = "offense", title = "Offense",
+        key = "offense", title = function() return Healer() and "Healing" or "Offense" end,
         blocks = OffenseBlocks,
     },
     {
@@ -1590,6 +1905,6 @@ function ns.PinSections()
             end
         end
     end
-    for _, section in ipairs({ Section.spell, Section.melee, Section.caps, rage, Section.ranged, pet }) do Add(section) end
+    for _, section in ipairs({ Section.spell, Section.melee, Section.caps, rage, Section.ranged, pet, healing }) do Add(section) end
     return sections
 end

@@ -12,7 +12,7 @@ ns.defaults = {
     attrEffects = true, -- each attribute on its own row with what it gives (+56 AP, +160 HP...)
     theme = "auto",     -- "auto" follows the sheet (EllesmereUI's skin or Blizzard's), or pick one
     tab = "overview",   -- the tab open last
-    role = "auto",      -- "+10 of each" as melee, ranged or caster; "auto" goes by class and form
+    roles = {},         -- per class: show as tank, melee, ranged, caster or healer; "auto" (or none) goes by stance, form and gear
     compare = true,     -- add what an item would change to its tooltip
     compareBoth = true, -- a ring or trinket: compare with both you wear (false: the weaker only)
     collapsed = {},     -- blocks folded away by clicking their header
@@ -20,7 +20,8 @@ ns.defaults = {
     history = {},       -- per character ("Name-Realm"): points for "Over time" on the Gear tab (Tracker.lua)
     sections = { general = true, attributes = true, caps = true, melee = true, ranged = true, spell = true,
         defense = true, armorLevels = true, tanking = true, rage = true, supplies = true,
-        ready = true, pet = true, measured = true, professions = true, weakest = true, history = true },
+        ready = true, pet = true, measured = true, professions = true, weakest = true, history = true,
+        healing = true, heals = true },
 }
 
 local CopyDefaults = FrogLib.Util.CopyDefaults
@@ -67,6 +68,8 @@ local SECTION_LABELS = {
     { "rage", "Rage: what swings and hits taken give (Offense)" },
     { "ranged", "Ranged, with a ranged weapon or wand (Offense)" },
     { "spell", "Spells, for classes with mana (Offense)" },
+    { "healing", "Healing: mana, regen while casting, healing talents (Healing, as a healer)" },
+    { "heals", "Your heals: each heal with your bonus healing, per second, per mana (Healing)" },
     { "pet", "Your pet (Offense)" },
     { "defense", "Defense: armor, defense skill, dodge, resistances (Defense)" },
     { "tanking", "Tanking a raid boss: threat, crushing blows, crits, block value (Defense)" },
