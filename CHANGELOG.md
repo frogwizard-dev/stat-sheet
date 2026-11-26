@@ -1,5 +1,12 @@
 # StatSheet
 
+## 0.8.1
+
+Needs FrogLib 1.19.0.
+
+- Threat uses Forever's own numbers: Defensive Stance x1.8, Bear Form x2.15, Defiance only with a shield (by its rank), Righteous Fury x1.33 on everything and x2.23 on Holy (on a line of its own). Feral Instinct, Improved Righteous Fury and Blessing of Salvation no longer show (on Forever they add no threat, or don't exist).
+- **Real DPS says when weapon skill holds it down.** With a weapon skill well short of your level's cap, nearly every swing glances for about a tenth of its damage (the game's own numbers), so real DPS can sit at a tenth of paper. The tile now names the skill under it ("21.6 on paper · Staves 38/100") so a low number doesn't look like a typo. Thanks for the report!
+
 ## 0.8.0
 
 - **Tank**, a new choice on the switch for warriors, druids and paladins (warriors get the switch for the first time: Auto, Tank, Melee). Auto picks it in Defensive Stance, Bear Form or with Righteous Fury, and the switch fits all five choices (Auto, Tank, Melee, Caster, Healer) for druids and paladins.

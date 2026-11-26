@@ -82,13 +82,20 @@ local damageTile = {
             if healing > damage then crit = string.format("+%s healing · %s", Number(healing), crit) end
             return "+" .. Number(damage), false, crit
         end
-        local paper, share
+        local paper, share, slot
         if Ranged() then
-            paper, share = Stats.RangedPaperDPS(), Stats.ShotTable(0).mult
+            paper, share, slot = Stats.RangedPaperDPS(), Stats.ShotTable(0).mult, INVSLOT_RANGED or 18
         else
-            paper, share = Stats.PaperDPS(), Stats.SwingTable(0).mult
+            paper, share, slot = Stats.PaperDPS(), Stats.SwingTable(0).mult, INVSLOT_MAINHAND or 16
         end
-        return string.format("%.1f", paper * share), false, string.format("%.1f on paper", paper)
+        local note = string.format("%.1f on paper", paper)
+        -- A weapon skill well short of your level's cap says why real DPS is so far under paper: past
+        -- 10 points short, most swings glance (Forever's GetGlancingBlowChance: 100% at half the cap).
+        local skill, _, name = Stats.WeaponSkill(slot)
+        if skill and name and skill < UnitLevel("player") * Stats.SKILL_PER_LEVEL - 10 then
+            note = string.format("%s · %s %d/%d", note, name, skill, UnitLevel("player") * Stats.SKILL_PER_LEVEL)
+        end
+        return string.format("%.1f", paper * share), false, note
     end,
     tip = function(tooltip)
         if TankRole() then
@@ -892,7 +899,7 @@ local supplies = {
 }
 
 ------------------------------------------------------------------------------
--- Threat: your multiplier from stance or form, talents and Salvation
+-- Threat: your multiplier from stance or form and talents (Forever's numbers: FrogLib.Tank.Threat)
 ------------------------------------------------------------------------------
 
 -- Spells known, buffs on you, and your threat multiplier with its parts: FrogLib.Tank.
@@ -906,18 +913,19 @@ local function ThreatCell()
         for _, part in ipairs(parts) do names[#names + 1] = part[1] end
         return string.format("x%.2f", multiplier), false, table.concat(names, ", ")
     end, tip = function(tooltip)
-        local multiplier, parts = Threat()
+        local multiplier, parts, holy = Threat()
         Line(tooltip, "How much threat what you do makes, against the same damage or healing with nothing changing it:")
         for _, part in ipairs(parts) do Line(tooltip, part[1], string.format("x%.2f", part[2])) end
         Line(tooltip, "Together", string.format("x%.2f", multiplier))
+        if holy then Line(tooltip, "Holy spells and attacks", string.format("x%.2f", holy)) end
         Line(tooltip, " ")
-        Line(tooltip, "|cff8c8c8cClassic's numbers: abilities with extra threat of their own (Sunder Armor, "
-            .. "Revenge) are multiplied too.|r")
+        Line(tooltip, "|cff8c8c8cForever's own numbers. Abilities with extra threat of their own (Sunder Armor, "
+            .. "Revenge, Maul) are multiplied too.|r")
     end }
 end
 
 table.insert(tanking.cells, 1, ThreatCell())
--- Everyone else sees it with the general stats when something's changing it (Salvation, rogues).
+-- Everyone else sees it with the general stats when something's changing it (rogues).
 local otherThreat = ThreatCell()
 local TankGet = otherThreat.get
 otherThreat.get = function()
